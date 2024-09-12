@@ -1,0 +1,2 @@
+recursive-include transport_model_tools/bin *.jar
+recursive-include transport_model_tools/defaults/matsim *

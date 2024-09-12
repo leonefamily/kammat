@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<vehicleDefinitions xmlns="http://www.matsim.org/files/dtd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.matsim.org/files/dtd http://www.matsim.org/files/dtd/vehicleDefinitions_v2.0.xsd">
+
+	<vehicleType id="car">
+		<capacity seats="5" standingRoomInPersons="0">
+
+		</capacity>
+		<length meter="4.0"/>
+		<width meter="1.8"/>
+		<maximumVelocity meterPerSecond="36.11"/>
+		<costInformation>
+
+		</costInformation>
+		<passengerCarEquivalents pce="1.0"/>
+		<networkMode networkMode="car"/>
+		<flowEfficiencyFactor factor="1.0"/>
+	</vehicleType>
+
+	<vehicleType id="truck">
+		<capacity seats="1" standingRoomInPersons="0">
+
+		</capacity>
+		<length meter="8.0"/>
+		<width meter="2.1"/>
+		<maximumVelocity meterPerSecond="22.22"/>
+		<costInformation>
+
+		</costInformation>
+		<passengerCarEquivalents pce="2.0"/>
+		<networkMode networkMode="truck"/>
+		<flowEfficiencyFactor factor="1.0"/>
+	</vehicleType>
+
+</vehicleDefinitions>
