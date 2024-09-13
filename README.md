@@ -5,28 +5,31 @@
 A module to handle transformation of input data into MATSim format
 and process its outputs.
 
-Word _kammat_ means _combed_ in Swedish, hence the choice of the logo design and the purpose overall -
-make process of generating MATSim population more straightforward and easy.
+Word _kammat_ means _combed_ in Swedish, hence the choice of the logo design,
+it also matches the purpose overall - make process of generating MATSim population
+and analyzing its outputs more straightforward and easy.
 
 
 ## Installation
 ### Windows
-
+Create a virtual environment using command line by typing `python -m venv .`
+in a folder of your choice (`cd` there if necessary), then proceed to activate it
+`Scripts/activate.bat`. You should see `(venv)` on the left side of new line.
+Then, while in the folder with this package source code, type `pip install .`,
+which will automatically use `pyproject.toml` file to get and build the package.
+In the result you'll be able to launch the graphical user interface
+of this package by typing `kammat-gui` while in the virtual environment.
 ### Linux
-_Tested with Ubuntu 22.04.2 (Jammy Jellyfish), Python 3.10_
-1. Open repository's root folder in the terminal and run `sudo ./install.sh`.
-Bash script creates virtual environment in current directory using your system
-main python interpreter, and installs `mmdms` with dependencies in it.
-Wait until the process is done. You might need to install `pip3` package using
-`sudo apt-get install python3-pip` prior to the rest of installation
-2. Once framework is correctly installed, allow executing `run.sh` through
-your file manager (in Nautilus right-click the file -> `Properties` -> `Permissions`
--> check `Allow executing file as program` and then double-click the file every time
-you need it) or through Terminal using `sudo chmod +x run.sh`.
-Script handles framework's GUI startup inside the created virtual environment.
+Create a virtual environment using command line by typing `python3 -m venv .`
+in a folder of your choice (`cd` there if necessary), then proceed to activate it
+`source ./venv/bin/activate`. You should see `(venv)` on the left side of new line.
+Then, while in the folder with this package source code, type `pip3 install .`,
+which will automatically use `pyproject.toml` file to get and build the package.
+In the result you'll be able to launch the graphical user interface
+of this package by typing `kammat-gui` while in the virtual environment.
 ## Usage
 ### Types of input data
-You can find every file's example in `examples` directory.
+TODO: You can find every file's example in `examples` directory.
 
 Main limitations:
 - if _non-strict diaries_ are used, _times_ are obligatory;
