@@ -97,7 +97,7 @@ def create_new_facilities(
     -------
     Tuple[gpd.GeoDataFrame, Dict[str, Dict[int, int]]]
         new_facilities : GeoDataFrame
-            Fully valid facilities to serve as input for mmdms framework
+            Fully valid facilities to serve as input for kammat framework
         negative_change : Dict[str, Dict[int, int]]
             Values to remove capacity, if negative change encountered
 

@@ -109,7 +109,7 @@ def about_popup(
                  metadata={'link': GIT_LINK})],
     ]
     window.disappear()
-    awindow = sg.Window('About MMDMS', alayout, finalize=True)
+    awindow = sg.Window('About kammat', alayout, finalize=True)
 
     while True:
         event, values = awindow.read()
@@ -797,6 +797,9 @@ def prepare_command(
         elif isinstance(v, (int, float)):
             commands_list.append(f'--{k.replace("_", "-")} {v}')
         else:
+            if isinstance(v, str):
+                if not v.strip():
+                    continue
             commands_list.append(f'--{k.replace("_", "-")} "{v}"')
     command = f'{interpreter_path} "{script_path}" ' + ' '.join(commands_list)
     return command
@@ -1106,7 +1109,7 @@ def get_main_window(
         populated: bool = True
 ) -> sg.Window:
     layout = get_full_layout()
-    window = sg.Window(f'MMDMS {version}', layout, finalize=True)
+    window = sg.Window(f'kammat {version}', layout, finalize=True)
     if populated:
         restore_settings(window, APP_NAME)
     control_disabled(window, keys_list=USEPOP_KEYS,
@@ -1292,7 +1295,7 @@ def main():
     except Exception:
         import traceback
         sg.popup_error_with_traceback(
-            "MMDMS's GUI has crashed", traceback.format_exc()
+            "kammat's GUI has crashed", traceback.format_exc()
         )
         dump_log(window)
 

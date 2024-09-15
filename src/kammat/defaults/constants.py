@@ -234,7 +234,7 @@ PT2MATSIM_VEHICLES_NAME: str = 'vehicles.xml'
 PT2MATSIM_EXECUTABLE_PATH: str = '../bin/pt2matsim-22.3-shaded.jar'
 # relative to THIS file path
 
-CACHE_SETTINGS_PATH: str = str(Path.home() / '.mmdms')
+CACHE_SETTINGS_PATH: str = str(Path.home() / '.kammat')
 
 LOGGER_FORMAT: str = '%(asctime)s | %(levelname)s | %(name)s:%(module)s:%(lineno)d:%(funcName)s() - %(message)s'
 
