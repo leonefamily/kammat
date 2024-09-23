@@ -6,15 +6,18 @@ Created on Tue Jun 11 12:48:34 2024
 @author: leonefamily
 """
 
-from pathlib import Path
-import pandas as pd
-import geopandas as gpd
-import lxml
-from lxml import etree
-from typing import List, Dict, Optional, Any, Union
+import sys
 import copy
+import lxml
+import logging
+import argparse
+import pandas as pd
+from lxml import etree
+import geopandas as gpd
+from pathlib import Path
 from datetime import datetime as dt
-from kammat.tools.gtfs.load import write_gtfs
+from kammat.tools.gtfs.io import write_gtfs
+from typing import List, Dict, Optional, Any, Union
 
 
 def extract_stop_facility(
@@ -131,13 +134,16 @@ def main(
         service_id: str = '1',
         agency_id: str = 'MATSIM2GTFS'
 ):
-    schedule_path = '/home/leonefamily/disser_model/runs/2024_06_13_13-12-50_minibus_reduced_para_net/model/output_transitSchedule.xml.gz'
-    out_gtfs_path = '/home/leonefamily/disser_model/runs/2024_06_13_13-12-50_minibus_reduced_para_net/gtfs_minibus/'
-    service_id: str = '1'
-    agency_id: str = 'MATSIM2GTFS'
     schedule = lxml.etree.parse(str(schedule_path))
-
     crs = get_crs(schedule=schedule)
+    if crs:
+        logging.info(f'Found CRS: {crs}')
+    else:
+        logging.info(
+            f"Didn't find CRS in coordinateReferenceSystem attribute, "
+            "GTFS will have the same coordinates as transitSchedule "
+            "without translation to WGS84"
+        )
 
     stops_rows = []
     trips_rows = []
@@ -209,3 +215,32 @@ def main(
         gtfs=gtfs,
         output_directory_or_zip=out_gtfs_path
     )
+
+
+def parse_args(
+        args_from: Optional[List[str]] = None
+) -> argparse.Namespace:
+    if args_from is None:
+        args_from = sys.argv[1:]
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--schedule-path", required=True,
+                        help="Where original transitSchedule.xml is located")
+    parser.add_argument("-o", "--out-gtfs-path", required=True,
+                        help="Where to save resulting GTFS data")
+    parser.add_argument("-s", "--service-id", default='1',
+                        help="Reproject from CRS (epsg:xxxx)")
+    parser.add_argument("-a", "--agency-id", default='MATSIM2GTFS',
+                        help="Reproject to CRS (epsg:xxxx)")
+    args = parser.parse_args(args_from)
+    return args
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    main(
+        schedule_path=args.schedule_path,
+        out_gtfs_path=args.out_gtfs_path,
+        service_id=args.service_id,
+        agency_id=args.agency_id,
+)

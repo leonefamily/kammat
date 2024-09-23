@@ -22,7 +22,8 @@ from qgis.gui import QgsMapCanvas
 from qgis.core import QgsApplication, QgsProject, QgsVectorLayer, QgsSymbol, QgsSimpleFillSymbolLayer, \
     QgsRendererCategory, QgsCategorizedSymbolRenderer, QgsVectorLayerSimpleLabeling, \
     QgsPalLayerSettings, QgsTextFormat, QgsTextBufferSettings, QgsLayerTreeGroup, QgsRendererRange, \
-    QgsGraduatedSymbolRenderer, QgsClassificationPrettyBreaks
+    QgsGraduatedSymbolRenderer, QgsClassificationPrettyBreaks, QgsRuleBasedLabeling, QgsProperty, QgsPropertyCollection, \
+    QgsExpression, QgsStyle, QgsFeatureRequest, QgsRuleBasedRenderer
 
 logging.basicConfig(
     format='%(asctime)s | %(levelname)s | %(name)s:%(module)s:%(lineno)d:%(funcName)s() - %(message)s',
@@ -183,6 +184,114 @@ def apply_labels(
     layer.triggerRepaint()
 
 
+def apply_model_diff_label_rules(
+        layer: QgsVectorLayer,
+        mode: str = 'car',
+        # font_name: str = 'Arial',
+        # font_size: int = 12,
+        # buffer_size: int = 0.1,
+        # enable: bool = True,
+):
+    # layer_settings = QgsPalLayerSettings()
+    # text_format = QgsTextFormat()
+    #
+    # text_format.setFont(QFont(font_name, font_size))
+    # text_format.setSize(font_size)
+    #
+    # buffer_settings = QgsTextBufferSettings()
+    # buffer_settings.setEnabled(enable)
+    # buffer_settings.setSize(buffer_size)
+    # buffer_settings.setColor(QColor(font_color))
+    # text_format.setBuffer(buffer_settings)
+    #
+    # layer_settings.setFormat(text_format)
+    #
+    # layer_settings.fieldName = field_name
+    # layer_settings.placement = QgsPalLayerSettings.Line  # ???
+    #
+    # layer_settings.enabled = enable
+    #
+    # layer_settings = QgsVectorLayerSimpleLabeling(layer_settings)
+    # layer_settings.isExpression = is_expression
+    #
+    # layer.setLabelsEnabled(enable)
+    # layer.setLabeling(layer_settings)
+    # layer.commitChanges()
+    # layer.triggerRepaint()
+    # # # #
+
+    # create and append new rules
+    root = QgsRuleBasedLabeling.Rule(QgsPalLayerSettings())
+
+    # Changed values
+    settings1 = QgsPalLayerSettings()
+    settings1.fieldName = f'round("{mode}_ad" / 1000, 1)'
+    settings1.isExpression = True
+    text_format1 = QgsTextFormat()
+    text_format1.setSize(10)
+    expression = (
+        f'''CASE
+         WHEN "{mode}_ad" < 0
+         THEN ramp_color('Greens', "{mode}_ad" / minimum("{mode}_ad"))
+         WHEN "{mode}_ad" > 0
+         THEN ramp_color('Reds', {mode}_ad / maximum("{mode}_ad"))
+         END'''
+    )
+    pc = QgsPropertyCollection(f'{mode} properties')
+    prop = QgsProperty.fromExpression(expression)
+    prop.setField('Color')
+    prop.setActive(True)
+    pc.setProperty(QgsPalLayerSettings.Color, prop)
+    text_format1.setDataDefinedProperties(pc)
+    settings1.setFormat(text_format1)
+    rule1 = QgsRuleBasedLabeling.Rule(settings1)
+    rule1.setDescription(f'{mode}_ad')
+    rule1.setFilterExpression(
+        'link_id_0 IS NOT NULL AND link_id_1 IS NOT NULL'
+        f' AND ({mode}_ad > 50 OR {mode}_ad < -50)'
+    )
+    root.appendChild(rule1)
+    # Added values
+    settings2 = QgsPalLayerSettings()
+    settings2.fieldName = f'round({mode}_1  / 1000, 1)'
+    settings2.isExpression = True
+    text_format2 = QgsTextFormat()
+    text_format2.setSize(10)
+    text_format2.setColor(QColor('red'))
+    settings2.setFormat(text_format2)
+    rule2 = QgsRuleBasedLabeling.Rule(settings2)
+    rule2.setDescription(f'{mode}1_only')
+    rule2.setFilterExpression(
+        'link_id_1 IS NOT NULL AND link_id_0 IS NULL'
+        f'and {mode}_1 > 50'
+    )
+    root.appendChild(rule2)
+    # Removed values
+    settings3 = QgsPalLayerSettings()
+    settings3.fieldName = f'-round({mode}_0  / 1000, 1)'
+    settings3.isExpression = True
+    text_format3 = QgsTextFormat()
+    text_format3.setSize(10)
+    text_format3.setColor(QColor('green'))
+    settings2.setFormat(text_format2)
+    rule3 = QgsRuleBasedLabeling.Rule(settings3)
+    rule3.setDescription(f'{mode}1_only')
+    rule3.setFilterExpression(
+        'link_id_0 IS NOT NULL AND link_id_1 IS NULL '
+        f'AND {mode}_0 > 50'
+    )
+    root.appendChild(rule3)
+
+    # Apply label configuration
+    rules = QgsRuleBasedLabeling(root)
+
+    layer.setLabelsEnabled(True)
+    layer.setLabeling(rules)
+    layer.setCustomProperty('note', expression)
+    layer.commitChanges()
+    layer.triggerRepaint()
+
+
 def apply_graduated_symbology(
         layer: QgsVectorLayer,
         field_name: str,
@@ -190,7 +299,8 @@ def apply_graduated_symbology(
         min_size: float = 1.0,
         max_size: float = 10.0,
         classes: int = 10,
-        color: str = "#f5c9c9"
+        color: str = "#f5c9c9",
+        symmetry_around_zero: bool = False
 ):
     gradlist = []
     if range_data is None:
@@ -198,15 +308,33 @@ def apply_graduated_symbology(
         cm.setLabelFormat("%1 — %2")
         cm.setLabelPrecision(0)
         cm.setLabelTrimTrailingZeroes(True)
+        if symmetry_around_zero:
+            cm.setSymmetricMode(enabled=True, symmetryPoint=0)
+            # style = QgsStyle.defaultStyle()
+            # gramp = style.colorRamp('Greens')
+            # rramp = style.colorRamp('Reds')
         range_data = [
             {'min': cr.lowerBound(), 'max': cr.upperBound(), 'label': cr.label()}
             for cr in cm.classes(layer, field_name, classes)
         ]
+
     for n, range_el in enumerate(range_data):
         symbol = QgsSymbol.defaultSymbol(layer.geometryType())
         symbol.setColor(QColor(color))
         try:
-            size = max(min_size, range_el['min'] / range_data[-1]['min'] * max_size)
+            if symmetry_around_zero:
+                if range_el['min'] < 0:
+                    ratio = abs(range_el['min'] / range_data[0]['min'])
+                    size = max(min_size, ratio * max_size)
+                    # symbol.setColor(gramp.color(ratio))
+                    symbol.setColor(QColor('green'))
+                else:
+                    ratio = range_el['max'] / range_data[-1]['max']
+                    size = max(min_size, ratio * max_size)
+                    # symbol.setColor(rramp.color(ratio))
+                    symbol.setColor(QColor('red'))
+            else:
+                size = max(min_size, range_el['min'] / range_data[-1]['min'] * max_size)
         except ZeroDivisionError:
             size = min_size
         try:
@@ -217,6 +345,127 @@ def apply_graduated_symbology(
         gradlist.append(gradrange)
 
     renderer = QgsGraduatedSymbolRenderer(field_name, gradlist)
+    layer.setRenderer(renderer)
+    layer.triggerRepaint()
+
+
+def pretty_breaks(min_value, max_value, num_classes):
+    range_value = max(abs(min_value), abs(max_value))
+    interval = range_value / num_classes
+
+    # Round the interval to a "pretty" number
+    if interval < 1:
+        interval = 10 ** math.floor(math.log10(interval))
+    elif interval < 10:
+        interval = round(interval)
+    else:
+        interval = round(interval / 10) * 10
+
+    # Calculate the class breaks
+    breaks = []
+    for i in range(-num_classes, num_classes + 1):
+        break_value = i * interval
+        breaks.append(break_value)
+
+    return breaks
+
+
+def apply_model_links_graduated_symbology(
+        layer: QgsVectorLayer,
+        mode: str,
+        min_size: float = 1.0,
+        max_size: float = 10.0,
+        classes: int = 10
+):
+    added_filter = (
+        'link_id_1 IS NOT NULL AND link_id_0 '
+        f'IS NULL AND {mode}_1 > 50'
+    )
+    remove_filter = (
+        'link_id_0 IS NOT NULL AND link_id_1 '
+        f'IS NULL AND {mode}_0 > 50'
+    )
+    change_filter = (
+        'link_id_0 IS NOT NULL AND link_id_1 '
+        f'IS NOT NULL AND ({mode}_ad > 50 OR {mode}_ad < -50)'
+    )
+
+    layer.setSubsetString(added_filter)
+    mode_1_index = layer.fields().indexOf(f'{mode}_1')
+    max_added_value = layer.maximumValue(mode_1_index)
+    layer.setSubsetString(remove_filter)
+    mode_0_index = layer.fields().indexOf(f'{mode}_0')
+    min_removed_value = -layer.maximumValue(mode_0_index)
+    layer.setSubsetString(change_filter)
+    mode_ad_index = layer.fields().indexOf(f'{mode}_ad')
+    min_changed_value = layer.minimumValue(mode_ad_index)
+    max_changed_value = layer.maximumValue(mode_ad_index)
+    min_value = min(min_changed_value, min_removed_value)
+    max_value = max(max_changed_value, max_added_value)
+    layer.setSubsetString('')
+
+    breaks = pretty_breaks(min_value, max_value, classes)
+    rules_list = []
+
+    for n, up_break in enumerate(breaks[1:]):
+        down_break = breaks[n - 1]
+        symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+        if down_break < 0:
+            symbol.setColor(QColor('red'))
+            if abs(min(breaks)) != 0:
+                ratio = abs(down_break) / abs(min(breaks))
+                size = max(min_size, ratio * max_size)
+            else:
+                size = min_size
+        else:
+            symbol.setColor(QColor('green'))
+            if max(breaks) != 0:
+                ratio = up_break / max(breaks)
+                size = max(min_size, ratio * max_size)
+            else:
+                size = max_size
+        try:
+            symbol.setSize(size)
+        except AttributeError:
+            symbol.setWidth(size)
+        # Added features
+        rule1 = QgsRuleBasedRenderer.Rule(
+            symbol=symbol,
+            filterExp=(
+                added_filter +
+                f' AND {mode}_1 > {down_break} AND {mode}_1 <= {up_break}'
+                f' AND abs({mode}_1) > 50'
+            ),
+            label = f'{down_break} < added <= {up_break}'
+        )
+        # Removed features
+        rule2 = QgsRuleBasedRenderer.Rule(
+            symbol=symbol,
+            filterExp=(
+                remove_filter +
+                f' AND {mode}_0 > {down_break} AND {mode}_0 <= {up_break}'
+                f' AND abs({mode}_0) > 50'
+            ),
+            label=f'{down_break} < removed <= {up_break}'
+        )
+        # Changed features
+        rule3 = QgsRuleBasedRenderer.Rule(
+            symbol=symbol,
+            filterExp=(
+                change_filter +
+                f' AND {mode}_ad > {down_break} AND {mode}_ad <= {up_break}'
+            ),
+            label=f'{down_break} < changed <= {up_break}'
+        )
+        rules_list.extend([rule1, rule2, rule3])
+
+    renderer = QgsRuleBasedRenderer(
+        QgsSymbol.defaultSymbol(layer.geometryType())
+    )
+    root = renderer.rootRule()
+    for rule in rules_list:
+        root.appendChild(rule)
+    # root.removeChildAt(0)
     layer.setRenderer(renderer)
     layer.triggerRepaint()
 
@@ -293,6 +542,90 @@ def set_road_network_rw_differences_layers(
         nlayer.updateExtents()
         project.layerTreeRoot().findLayer(nlayer).setItemVisibilityChecked(False)
         layers.append(nlayer)
+    return layers
+
+
+@none_if_failed
+def set_road_network_model_differences_layers(
+        project: QgsProject,
+        path: Union[str, Path],
+        group: QgsLayerTreeGroup = None
+) -> QgsVectorLayer:
+    layer = QgsVectorLayer(path, "Differences", "ogr")
+    layers = []
+    if not layer.isValid():
+        raise RuntimeError(f'Layer {path} is invalid')
+
+    for mode in ['car', 'truck']:
+        nlayer = layer.clone()
+        nlayer.setName(mode)
+        if group is not None:
+            project.addMapLayer(nlayer, False)
+            group.addLayer(nlayer)
+        else:
+            project.addMapLayer(nlayer)
+
+        apply_graduated_symbology(
+            layer=layer,
+            min_size=0.5,
+            max_size=5,
+            classes=50,
+            field_name=f'{mode}_ad',
+            symmetry_around_zero=True,
+            range_data=None
+        )
+        # apply_model_links_graduated_symbology(
+        #     layer=layer,
+        #     min_size=0.5,
+        #     max_size=5,
+        #     classes=50,
+        #     mode=mode
+        # )
+        apply_model_diff_label_rules(
+            layer=nlayer,
+            mode=mode
+        )
+        nlayer.updateExtents()
+        project.layerTreeRoot().findLayer(nlayer).setItemVisibilityChecked(False)
+        layers.append(nlayer)
+    return layers
+
+
+@none_if_failed
+def set_pt_network_model_differences_layers(
+        project: QgsProject,
+        path: Union[str, Path],
+        group: QgsLayerTreeGroup = None
+) -> QgsVectorLayer:
+    layer = QgsVectorLayer(path, "Differences", "ogr")
+    layers = []
+    if not layer.isValid():
+        raise RuntimeError(f'Layer {path} is invalid')
+
+    nlayer = layer.clone()
+    nlayer.setName('pt')
+    if group is not None:
+        project.addMapLayer(nlayer, False)
+        group.addLayer(nlayer)
+    else:
+        project.addMapLayer(nlayer)
+
+    apply_graduated_symbology(
+        layer=layer,
+        min_size=0.5,
+        max_size=5,
+        classes=50,
+        field_name=f'count_ad',
+        symmetry_around_zero=True,
+        range_data=None
+    )
+    apply_model_diff_label_rules(
+        layer=nlayer,
+        mode='count'
+    )
+    nlayer.updateExtents()
+    project.layerTreeRoot().findLayer(nlayer).setItemVisibilityChecked(False)
+    layers.append(nlayer)
     return layers
 
 
@@ -664,6 +997,22 @@ def create_project(
         )
         if rw_road_int_diff_layers is not None:
             layers_list.extend(rw_road_int_diff_layers)
+    if comparison_model_road_diffs_path is not None:
+        model_road_diff_layers = set_road_network_model_differences_layers(
+            project=project,
+            group=m_comp_group,
+            path=comparison_model_road_diffs_path
+        )
+        if model_road_diff_layers is not None:
+            layers_list.extend(model_road_diff_layers)
+    if comparison_model_pt_diffs_path is not None:
+        model_pt_diff_layers = set_pt_network_model_differences_layers(
+            project=project,
+            group=m_comp_group,
+            path=comparison_model_pt_diffs_path
+        )
+        if model_pt_diff_layers is not None:
+            layers_list.extend(model_pt_diff_layers)
 
     canvas = QgsMapCanvas()
     canvas.setExtent(layers_list[0].extent())

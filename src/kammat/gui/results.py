@@ -21,7 +21,6 @@ sg.theme('default1')
 
 
 def filter_keys(
-        sub_window: sg.Window,
         values: Dict[str, Any]
         ):
     ret_keys = [
@@ -37,9 +36,8 @@ def filter_keys(
                 matches = re.search(r'\((.*?)\)', key)
                 if matches:
                     key_name = re.sub(r'\(|\)', '', matches.group(0))
-                    type_name = sub_window[key].metadata
-                    if type_name is not None and len(val.strip()) > 0:
-                        vvs[ret_key][key_name] = type_name(val)
+                    if len(val.strip()) > 0:
+                        vvs[ret_key][key_name] = val
     return vvs
 
 
@@ -60,7 +58,7 @@ def generate_analysis_layout(
                      default_text=value,
                      size=50,
                      key=f'{key}({content_key})',
-                     metadata=type(value) if value is not None else None
+                     # metadata=type(value) if value is not None else None
                      ),
                  sg.FileBrowse()
                  ]
@@ -92,7 +90,7 @@ def generate_analysis_layout(
         if event == sg.WINDOW_CLOSED:
             break
         elif event == '-RUN-':
-            vvs = filter_keys(sub_window, values)
+            vvs = filter_keys(values)
             break
     sub_window.close()
     return vvs

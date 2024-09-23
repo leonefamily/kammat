@@ -275,7 +275,6 @@ def handle_spatial_comparison(
         prev_net_path: Union[str, Path],
         curr_net_path: Union[str, Path],
         comparison_columns: Union[List[str], Tuple[str], str],
-        on_column: str,
         diff_net_save_path: Union[str, Path] = None
         ) -> Optional[gpd.GeoDataFrame]:
     prev_net = gpd.read_file(prev_net_path)
@@ -283,16 +282,19 @@ def handle_spatial_comparison(
     crss = [crs for crs in (net.crs, prev_net.crs) if crs is not None]
     crs = crss[0].srs if crss else None
     diff_net = net.merge(
-        prev_net, suffixes=('_1', '_0'), on=on_column, how='left'
-        )
-    diff_net['geometry'] = net['geometry']
-    diff_net.drop(['geometry_0', 'geometry_1'], axis=1, inplace=True)
+        prev_net, suffixes=('_1', '_0'), on='geometry', how='outer'
+    )
     if isinstance(comparison_columns, (list, tuple)):
         for col in comparison_columns:
+            diff_net[col + '_1'] = diff_net[col + '_1'].fillna(0)
+            diff_net[col + '_0'] = diff_net[col + '_0'].fillna(0)
+            # ad - absolute difference, rd - relative difference
             diff_net[col + '_ad'] = diff_net[col + '_1'] - diff_net[col + '_0']
             diff_net[col + '_rd'] = diff_net[col + '_ad'] / diff_net[col + '_0']
     elif isinstance(comparison_columns, str):
         col = comparison_columns
+        diff_net[col + '_1'] = diff_net[col + '_1'].fillna(0)
+        diff_net[col + '_0'] = diff_net[col + '_0'].fillna(0)
         diff_net[col + '_ad'] = diff_net[col + '_1'] - diff_net[col + '_0']
         diff_net[col + '_rd'] = diff_net[col + '_ad'] / diff_net[col + '_0']
     else:
@@ -331,7 +333,6 @@ def handle_model_comparison(
                     prev_net_counts_path,
                     curr_net_counts_path,
                     EVENTS_MODES,
-                    'link_id',
                     diff_net_counts_save_path
                     )
             except Exception as e:
@@ -346,7 +347,6 @@ def handle_model_comparison(
                     prev_pt_net_counts_path,
                     curr_pt_net_counts_path,
                     'count',
-                    'link_id',
                     diff_pt_net_counts_save_path
                     )
             except Exception as e:
@@ -361,7 +361,6 @@ def handle_model_comparison(
                     prev_pt_stops_counts_path,
                     curr_pt_stops_counts_path,
                     ['entered', 'left', 'passed'],
-                    'stopRefId',
                     diff_pt_stops_counts_save_path
                     )
             except Exception as e:

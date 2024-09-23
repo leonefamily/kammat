@@ -1,1 +1,3 @@
-__version__ = '0.16.1'
+"""MATSim data management module"""
+
+__version__ = '0.16.2'

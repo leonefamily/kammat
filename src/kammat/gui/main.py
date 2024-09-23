@@ -729,7 +729,9 @@ def check_validity(
     vvs['gis']['output_volumes_stats'] = vvs['analysis']['output_volume_stats_path']
     vvs['gis']['comparison_rw_road_diffs'] = vvs['comparison']['network_differences_save_path']
     vvs['gis']['comparison_rw_road_intersection_diffs'] = vvs['comparison']['intersection_differences_save_path']
-
+    vvs['gis']['comparison_model_road_diffs'] = vvs['comparison']['diff_net_counts_save_path']
+    vvs['gis']['comparison_model_pt_diffs'] = vvs['comparison']['diff_pt_net_counts_save_path']
+    vvs['gis']['comparison_model_pt_stops_diffs'] = vvs['comparison']['diff_pt_stops_counts_save_path']
     return vvs, msgs
 
 
