@@ -51,12 +51,11 @@ def run_subprocess(
 
     """
     print(command)
-    is_win = platform.system().lower() == 'windows'
     p = subprocess.Popen(
-        command if is_win else shlex.split(command),
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        shell=is_win
+        shell=True
     )
 
     for line in p.stdout:

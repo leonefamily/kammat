@@ -6,6 +6,7 @@ Created on Thu Feb  2 14:06:34 2023
 """
 
 import gzip
+import logging
 import lxml
 import matplotlib
 import numpy as np
@@ -144,19 +145,23 @@ def get_route_profile(
         pt_stops[s]['linkRefId'] for s in stops_list
     ]
 
-    buffer = []
-    last_stop = None
-    cutoff = len(links_list)
-    for i, link in enumerate(links_list):
-        if link in stops_refs:
-            if i != 0:
-                stop = stops_list[stops_refs.index(link)]
-                route_profile.append((stop, buffer))
-                buffer = []
-                if i < cutoff:
-                    last_stop = stop
-        buffer.append(link)
-    route_profile[-1][1].extend(buffer)
+    for i in range(len(stops_list) - 1):
+        stop1 = stops_list[i]
+        stop1ref = stops_refs[i]
+        stop2 = stops_list[i + 1]
+        stop2ref = stops_refs[i + 1]
+
+        if stop1ref == stop2ref:
+            segment = [stop1ref]
+        else:
+            end_ix = links_list.index(stop2ref)
+            segment = links_list[:end_ix]
+            links_list = links_list[end_ix:]
+
+        route_profile.append(
+            (stop2, segment)
+        )
+
     return route_profile
 
 
@@ -207,7 +212,6 @@ def get_pt_stats(
     for lname, rid, veh, mode in zip(*lrvs.values()):
         cumulative = 0
         route_profile = profiles[lname][rid]
-
         for i, info in enumerate(pt_counts[veh]):
 
             if info['arrival'] < start:
@@ -218,10 +222,6 @@ def get_pt_stats(
             stops_stats[info['stop']]['entered'] += info['entered']
             stops_stats[info['stop']]['left'] += info['left']
 
-            # for stop, trails in route_profile:
-            #     if info['stop'] == stop:
-            #         for link in trails:
-            #             pt_links_stats[link] += cumulative
             for link in route_profile[i - 1][-1]:
                 pt_links_stats[link] += cumulative
 
@@ -459,8 +459,8 @@ def add_lines_column(
         ):
     prelinemap = defaultdict(set)
     for lineel in pt_schedule.findall('transitLine'):
-        for routeel in lineel.findall('transitRoute'):
-            for link in routeel.find('route').findall('link'):
+        for route_element in lineel.findall('transitRoute'):
+            for link in route_element.find('route').findall('link'):
                 if 'name' in lineel.attrib:
                     prelinemap[link.attrib['refId']].add(lineel.attrib['name'])
                 else:
@@ -598,14 +598,18 @@ def get_lines_routes_vehicles_profiles(
     unnamed_n = 0
     for element in pt_schedule.iter():
         if element.tag == 'departure':
-            routeel = element.getparent().getparent()
+            route_element = element.getparent().getparent()
             if link_ids is not None:
-                links = [el.attrib['refId'] for el in routeel.find('route')]
+                links = [
+                    el.attrib['refId'] for el in
+                    route_element.find('route')
+                ]
                 if not any(link in link_ids for link in links):
                     continue
             if stop_ids is not None:
                 stop_refs = [
-                    el.attrib['refId'] for el in routeel.find('routeProfile')
+                    el.attrib['refId'] for el in
+                    route_element.find('routeProfile')
                 ]
                 if stop_ids_type == 'linkRefId':
                     stop_refs = [
@@ -619,21 +623,21 @@ def get_lines_routes_vehicles_profiles(
                     ]
                 if not any(stop_ref in stop_ids for stop_ref in stop_refs):
                     continue
-            route = routeel.attrib['id']
-            parent_attr = routeel.getparent().attrib
+            route = route_element.attrib['id']
+            parent_attr = route_element.getparent().attrib
             if 'name' in parent_attr:
                 line = parent_attr['name']
                 isunnamed = False
             else:
                 line = f'u_{unnamed_n}'
                 isunnamed = True
-            mode = routeel.find('transportMode').text
+            mode = route_element.find('transportMode').text
             if lines is not None:
                 if line not in lines:
                     continue
             if line not in profiles:
                 profiles[line] = {}
-            rprofile = get_route_profile(routeel, pt_stops)
+            rprofile = get_route_profile(route_element, pt_stops)
             profiles[line][route] = rprofile
             lrvs['lines'].append(line)
             lrvs['routes'].append(route)

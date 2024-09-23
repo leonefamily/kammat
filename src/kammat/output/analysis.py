@@ -240,7 +240,11 @@ def analyze_output_basic(
                     output_pt_lines_intensities_directory
                 )
         if output_transfers_path:
-            legs_df = pd.read_csv(legs_path, **CSV_STYLE)
+            legs_df = pd.read_csv(
+                legs_path,
+                dtype={'transit_route': str},
+                **CSV_STYLE
+            )
             pt_stops = get_transit_stops(pt_schedule)
             # will not return transfers themselves, but flushes them to file
             get_pt_transfers(
