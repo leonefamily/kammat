@@ -315,8 +315,11 @@ def main(
                         table.to_excel(filename, index=False)
                     else:
                         table.to_csv(
-                            filename, index=False, **CSV_STYLE
-                            )
+                            filename,
+                            index=False,
+                            **CSV_STYLE,
+                            encoding='utf-8-sig'
+                        )
                 except Exception as e:
                     window['-INFO-'].update(
                         f'Error: {e}', text_color='firebrick1'

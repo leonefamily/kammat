@@ -1126,7 +1126,7 @@ def get_pt_transfers(
     legs_df : pd.DataFrame
         Legs table from MATSim output.
     start : int, optional
-        Earliest transfer time time in seconds. The default is 0.
+        Earliest transfer time in seconds. The default is 0.
     end : int, optional
         Latest transfer time in seconds. The default is 86400.
     flush_to : Optional[Union[str, Path]], optional
@@ -1166,6 +1166,8 @@ def get_pt_transfers(
         else:
             flusher = open(flush_to, mode='w', encoding='utf-8', newline='\n')
 
+    legs_have_vehicle_id = 'vehicle_id' in legs_df.columns
+    print(f'Legs have vehicle_id: {legs_have_vehicle_id}')
     transfers_rows = []
     for trip_id, trip_df in pt_legs_df.groupby('trip_id'):
         if len(trip_df) == 1:
@@ -1221,6 +1223,9 @@ def get_pt_transfers(
                     'wait_time': wait_time,
                     'transfer_time': transfer_time
                 }
+                if legs_have_vehicle_id:
+                    transfer_row['from_vehicle_id'] = last_leg['vehicle_id']
+                    transfer_row['to_vehicle_id'] = leg_row['vehicle_id']
                 transfers_rows.append(transfer_row)
             if flush_to is not None and transfers_rows and len(transfers_rows) % flush_n == 0:
                 part_transfers_df = pd.DataFrame(transfers_rows)

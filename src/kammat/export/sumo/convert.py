@@ -33,9 +33,9 @@ def parse_args(args_from: list = sys.argv[1:]) -> argparse.Namespace:
     parser.add_argument("-nc", "--net-crs", default='epsg:5514',
                         help="CRS for bounding box, default epsg:5514")
     parser.add_argument("-e", "--events", help="MATSim events")
-    parser.add_argument("-b", "--bbox", help="bounds: 'xmin,ymin,xmax,ymax' in WGS84")
-    parser.add_argument("-bc", "--bbox-crs", default='epsg:4326',
-                        help="CRS for bounding box, default epsg:4326")    
+    parser.add_argument("-b", "--bbox", help="Shapefile")
+    # parser.add_argument("-bc", "--bbox-crs", default='epsg:4326',
+    #                     help="CRS for bounding box, default epsg:4326")    
     parser.add_argument("-t1", "--time1", default=25200, type=int,
                         help="Start time in seconds")
     parser.add_argument("-t2", "--time2", default=28800, type=int,
@@ -58,21 +58,24 @@ def parse_args(args_from: list = sys.argv[1:]) -> argparse.Namespace:
     return args
 
 
-def cut_net(netpath, bounds=None, bbox_crs='epsg:4326', net_crs='epsg:5514'):
-    net = matsim.read_network(netpath).as_geo(net_crs)
+def cut_net(net_path, bounds_path=None, net_crs='epsg:5514'):
+    net = matsim.read_network(net_path).as_geo(net_crs)
     net = net[~net['link_id'].str.contains('pt')]
 
-    if bounds is None:
+    if bounds_path is None:
         net['center'] = net.centroid
         return net
 
-    bbox = box(*[float(coord) for coord in bounds.split(',')])
-    if bbox_crs == net_crs:
-        xmin, ymin, xmax, ymax = gpd.GeoSeries(bbox).set_crs(bbox_crs).iloc[0].bounds
-    else:
-        xmin, ymin, xmax, ymax = gpd.GeoSeries(bbox).set_crs(bbox_crs).to_crs(net_crs).iloc[0].bounds
+    # bbox = box(*[float(coord) for coord in bounds.split(',')])
+    # if bbox_crs == net_crs:
+    #     xmin, ymin, xmax, ymax = gpd.GeoSeries(bbox).set_crs(bbox_crs).iloc[0].bounds
+    # else:
+    #     xmin, ymin, xmax, ymax = gpd.GeoSeries(bbox).set_crs(bbox_crs).to_crs(net_crs).iloc[0].bounds
 
-    net_cut = net.cx[xmin:xmax, ymin:ymax].copy()
+    # net_cut = net.cx[xmin:xmax, ymin:ymax].copy()
+    
+    bounds = gpd.read_file(bounds_path)
+    net_cut = gpd.clip(net, bounds)
     if len(net_cut) == 0:
         raise RuntimeError('bbox is either too small or has incorrect values; '
                            'cut net does not have a single edge')
@@ -212,9 +215,7 @@ def write_plans(agents, graph, path):
           f"and {skipped['no_path']} invalid plans. "
           f"Plans count before: {befc}, now: {nowc} - {diff}% of total")
 
-    start_pop_writer(path)
-    write_agents(agents_list, path)
-    end_pop_writer(path)
+    write_agents(agents_list, path, including_start_end=True)
 
 
 def reshape_net(net_cut, tolerance=0.1) -> nx.MultiDiGraph:
@@ -271,7 +272,7 @@ def write_net(graph, outf):
         bigstring.write(f'    <node id="{i}" x="{node[0]}" y="{node[1]}" />\n')
     bigstring.write('</nodes>\n')
 
-    bigstring.write('<links>\n')
+    bigstring.write('<links capperiod="01:00:00">\n')
     for j, edge in enumerate(graph.edges):
         from_node, to_node, edge_num = edge
         attrs = graph.edges[edge]

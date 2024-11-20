@@ -5,6 +5,7 @@ Created on Thu Feb  2 14:07:50 2023
 @author: dgrishchuk
 """
 
+import lxml
 import copy
 import math
 import string
@@ -19,6 +20,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+from lxml import etree
 import matplotlib.dates as mdates
 from shapely.affinity import rotate
 from shapely.geometry import LineString, Point, MultiLineString

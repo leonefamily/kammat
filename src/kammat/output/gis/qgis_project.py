@@ -300,7 +300,8 @@ def apply_graduated_symbology(
         max_size: float = 10.0,
         classes: int = 10,
         color: str = "#f5c9c9",
-        symmetry_around_zero: bool = False
+        symmetry_around_zero: bool = False,
+        offset: Union[int, float] = 0
 ):
     gradlist = []
     if range_data is None:
@@ -321,6 +322,9 @@ def apply_graduated_symbology(
     for n, range_el in enumerate(range_data):
         symbol = QgsSymbol.defaultSymbol(layer.geometryType())
         symbol.setColor(QColor(color))
+        if offset != 0:
+            slayer = symbol.symbolLayers()[0]
+            slayer.setOffset(offset)
         try:
             if symmetry_around_zero:
                 if range_el['min'] < 0:
@@ -572,7 +576,8 @@ def set_road_network_model_differences_layers(
             classes=50,
             field_name=f'{mode}_ad',
             symmetry_around_zero=True,
-            range_data=None
+            range_data=None,
+            offset=10
         )
         # apply_model_links_graduated_symbology(
         #     layer=layer,

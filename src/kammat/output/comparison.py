@@ -275,7 +275,8 @@ def handle_spatial_comparison(
         prev_net_path: Union[str, Path],
         curr_net_path: Union[str, Path],
         comparison_columns: Union[List[str], Tuple[str], str],
-        diff_net_save_path: Union[str, Path] = None
+        diff_net_save_path: Union[str, Path] = None,
+        merge_bidir_roads: bool = False
         ) -> Optional[gpd.GeoDataFrame]:
     prev_net = gpd.read_file(prev_net_path)
     net = gpd.read_file(curr_net_path)

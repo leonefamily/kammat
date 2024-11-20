@@ -12,7 +12,7 @@ import os
 import re
 
 import lxml
-from typing import Union, Dict, List
+from typing import Union, Dict, List, Optional
 from pathlib import Path
 
 
@@ -23,7 +23,10 @@ else:
     raise ImportError('SUMO_HOME is missing in system environment')
 
 
-def parse_args(args_from: list = sys.argv[1:]) -> argparse.Namespace:
+def parse_args(
+        args_from: Optional[List[str]] = None
+) -> argparse.Namespace:
+    args_list = sys.argv[1:] if args_from is None else args_from
     parser = argparse.ArgumentParser()
     parser.add_argument("-n", "--net", help="*.net.xml")
     parser.add_argument("-r", "--routes", help="*.rou.xml")
@@ -32,7 +35,10 @@ def parse_args(args_from: list = sys.argv[1:]) -> argparse.Namespace:
     return args
 
 
-def find_predecessor(edge, edges):
+def find_predecessor(
+        edge,
+        edges
+):
     predecessors = []
     incomings = edge.getIncoming()
     for incoming in incomings.keys():
@@ -47,10 +53,11 @@ def find_predecessor(edge, edges):
     return predecessors
 
 
-def get_invalid_routes(
-        routes: lxml.etree._Element,
-        net
-        ) -> Dict[str, List[str]]:
+def remove_invalid_routes(
+        routes: lxml.etree.Element,
+        net,
+        save_valid=None
+) -> Dict[str, List[str]]:
 
     badtrips = []
     cnt = 0
@@ -79,12 +86,14 @@ def get_invalid_routes(
         # for stop in person.findall('stop'):
         #     stop.attrib['edge'] = re.sub(r'_\d+$', '', stop.attrib['lane'])
         #     del stop.attrib['lane']
-    lxml.etree.ElementTree(routes).write("pth.rou.xml", pretty_print=True)
+    if save_valid:
+        lxml.etree.ElementTree(routes).write(save_valid, pretty_print=True)
 
 
 def main(args):
     net = sumolib.net.readNet(args.net)
     routes = lxml.etree.parse(args.routes).getroot()
+    remove_invalid_routes(routes, net, args.output)
 
 
 if __name__ == '__main__':
