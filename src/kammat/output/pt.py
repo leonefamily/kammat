@@ -18,6 +18,7 @@ from lxml.etree import _ElementTree
 from matplotlib import pyplot as plt
 from collections import defaultdict
 from datetime import timedelta as td
+from shapely.geometry import Point
 from typing import Union, List, Dict, Tuple, Optional, Literal  # , Sequence, Any
 
 from kammat.output.utils import (
@@ -92,8 +93,9 @@ def load_pt_schedule(
 
 
 def get_transit_stops(
-        pt_schedule: _ElementTree
-        ) -> Dict[str, Dict[str, str]]:
+        pt_schedule: _ElementTree,
+        include_geometries: bool = False
+) -> Dict[str, Dict[str, str]]:
     """
     Get stops as a dictionary name with dictionary of attributes.
 
@@ -101,6 +103,8 @@ def get_transit_stops(
     ----------
     pt_schedule : _ElementTree
         Transit schedule tree
+    include_geometries : bool, optional
+        Whether to create a key `geometry` with shapely.Point object
 
     Returns
     -------
@@ -112,6 +116,8 @@ def get_transit_stops(
     for sfac in stop_facilities:
         attrs = sfac.attrib
         pt_stops[attrs['id']] = {k: attrs[k] for k in attrs if k != 'id'}
+        if include_geometries:
+            pt_stops[attrs['id']]['geometry'] = Point([attrs['x'], attrs['y']])
     return pt_stops
 
 
