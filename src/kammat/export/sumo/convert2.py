@@ -1,3 +1,4 @@
+import copy
 import warnings
 from collections import defaultdict
 from email.policy import default
@@ -334,7 +335,7 @@ def main():
     matsim_schedule_path = r"output_transitSchedule.xml.gz"
     matsim_transit_vehicles_path = r"output_transitVehicles.xml.gz"
     matsim_vehicles_path = r"output_vehicles.xml.gz"
-    cut_polygon_path = r"../../../../../shapes/shapes.shp"
+    cut_polygon_path = r"./shapes/shapes.shp"
     matsim_crs = 'epsg:5514'
     ignore_link_modes_str = 'artificial'
     ignore_activities_str = 'pt interaction'
@@ -416,6 +417,7 @@ def main():
 
     write_element_tree(pt_vehs_tree, './sumo/pt_vehs.rou.xml')
     write_element_tree(road_vehs_tree, './sumo/road_vehs.rou.xml')
+    write_element_tree(persons_tree, './sumo/persons.rou.xml')
 
     # graph = momepy.gdf_to_nx(
     #     gdf_network=cut_matsim_net,
@@ -424,7 +426,7 @@ def main():
     # )
 
     proj4_str = gpd.GeoDataFrame({'geometry': [None]}).set_crs(matsim_crs).crs.to_proj4()
-    f'netconvert --node-files=nodes.nod.xml --edge-files=edges.edg.xml --connection-files=connections.con.xml --output-file=net.net.xml --crossings.guess=true --crossings.guess.speed-threshold=15.00 --walkingareas=true'
+    f'netconvert --node-files=nodes.nod.xml --edge-files=edges.edg.xml --connection-files=connections.con.xml --output-file=net.net.xml --crossings.guess=true --walkingareas=true'
     '--proj="{proj4_str}"'
 
 def links_to_links_to_connections(
@@ -476,6 +478,7 @@ def int2time(
 
 def process_events(
         events_path: Union[str, Path],
+        net: gpd.GeoDataFrame,
         net_cut: gpd.GeoDataFrame,
         pt_stops: PtStops,
         pt_stops_within: PtStops,
@@ -485,8 +488,8 @@ def process_events(
         vehicles_types: Dict[str, str],
         vehicles: Dict[str, str]
 ):
-    min_time: Union[int, float] = 25200  # 25200
-    max_time: Union[int, float] = 28800  # 28800
+    min_time: Union[int, float] = 18000  # 25200
+    max_time: Union[int, float] = 21600  # 28800
 
     allowed_links = set(net_cut['link_id'].tolist())
     allowed_facilities = set(
@@ -495,22 +498,38 @@ def process_events(
     )
     pt_vehicles = defaultdict(list)
     road_vehicles = defaultdict(list)
+    persons_plans = defaultdict(list)
+    seen_pt_vehicles = set()
+    pt_drivers = set()
 
     events = matsim.event_reader(
         events_path,
     )
     for i, event in enumerate(events):
+        if event['type'] == 'vehicle enters traffic':
+            is_pt = vehicles_types[
+                re.sub(r'\s+', '_', vehicles[event['vehicle']])
+            ]['isPt']
+            if is_pt:
+                pt_drivers.add(event['person'])
         if min_time <= event['time'] < max_time:
-            if (
-                event['type'] in ['VehicleArrivesAtFacility',
-                                  'VehicleDepartsAtFacility']
-                and event['facility'] in pt_stops_within
-            ):
+            if event['type'] in ['VehicleArrivesAtFacility',
+                                 'VehicleDepartsAtFacility']:
                 is_pt = vehicles_types[
                     re.sub(r'\s+', '_', vehicles[event['vehicle']])
                 ]['isPt']
-                if is_pt:
-                    pt_vehicles[event['vehicle']].append(event)
+                if event['facility'] in pt_stops_within:
+                    if is_pt:
+                        pt_vehicles[event['vehicle']].append(event)
+                        seen_pt_vehicles.add(event['vehicle'])
+                else:
+                    if is_pt and event['vehicle'] in pt_vehicles:
+                        if pt_vehicles[event['vehicle']][-1]['facility'] is not None:
+                            event_new = copy.deepcopy(event)
+                            event_new['facility'] = None
+                            pt_vehicles[event['vehicle']].append(event_new)
+                        else:
+                            continue
             elif event['type'] == 'entered link':
                 is_pt = vehicles_types[
                     re.sub(r'\s+', '_', vehicles[event['vehicle']])
@@ -545,14 +564,27 @@ def process_events(
                             'last_link': event['link'],
                             'last_link_allowed': False,
                         })
-            elif event['type'] == '':  # !!!
-                pass
+            elif event['type'] == 'waitingForPt' and event['atStop'] in pt_stops_within:
+                persons_plans[event['person']].append(event)
+            elif event['type'] in ['PersonEntersVehicle', 'PersonLeavesVehicle']:
+                if event['person'] in pt_drivers:
+                    continue
+                if event['vehicle'] in seen_pt_vehicles:
+                    last_pt_event = pt_vehicles[event['vehicle']][-1]
+                    if last_pt_event['facility'] in pt_stops_within:
+                        persons_plans[event['person']].append(event)
+                        persons_plans[event['person']][-1]['facility'] = last_pt_event['facility']
+            elif event['type'] == 'arrival':
+                if event['person'] in persons_plans:
+                    last_event = persons_plans[event['person']][-1]
+                    if event['legMode'] == 'walk' and last_event['type'] == 'PersonLeavesVehicle':
+                        persons_plans[event['person']].append(event)
+
         elif event['time'] >= max_time:
             break
         if i % 1000000 == 0:
             tm = int2time(event['time'])
             print(f'Event {i}, time {tm}')
-
 
     #####
     pt_veh_routes_root = etree.Element("routes")
@@ -564,22 +596,49 @@ def process_events(
                 if k != 'isPt':
                     vtype.attrib[k] = str(v)
 
-    for vnum, (pt_veh_id, pt_veh_events) in enumerate(pt_vehicles.items()):
+    for pt_veh_id, pt_veh_events in pt_vehicles.items():
+        if not pt_veh_events:
+            continue
         trip_el = etree.SubElement(pt_veh_routes_root, "trip")
         pt_veh_id_us = re.sub(r'\s+', '_', pt_veh_id)
-        trip_el.attrib['id'] = f'{pt_veh_id_us}_{vnum}'
-        trip_el.attrib['type'] = vehicles[pt_veh_id]
+        trip_el.attrib['id'] = pt_veh_id_us
+        trip_el.attrib['type'] = re.sub(r'\s+', '_', vehicles[pt_veh_id])
+
+        line_name = None
+        for line, line_data in lines_routes_stops.items():
+            for route, route_data in line_data['routes'].items():
+                if pt_veh_id in route_data['vehicles']:
+                    line_name = line_data['name']
+        trip_el.attrib['line'] = line_name
+
+        # if pt_veh_id_us == 'veh_19628_bus':
+        #     raise
+
         for pt_veh_event in pt_veh_events:
+            if pt_veh_event['facility'] is None:
+                jump_el = etree.SubElement(trip_el, "jump")
+                continue
+            else:
+                jump_el = None
             if pt_veh_event['type'] == 'VehicleDepartsAtFacility':
-                children = trip_el.xpath('./*')
+                children = trip_el.xpath('./stop')
                 if children and 'until' not in children[-1].attrib:
                     children[-1].attrib['until'] = str(pt_veh_event['time'])
+                elif not children:
+                    stop_el = etree.SubElement(trip_el, "stop")
+                    stop_el.attrib['busStop'] = pt_veh_event['facility']
+                    stop_el.attrib['until'] = str(pt_veh_event['time'])
+                    stop_el.attrib['duration'] = str(5)
                 if 'depart' not in trip_el.attrib:
                     trip_el.attrib['depart'] = str(pt_veh_event['time'])
             else:
-                conn_el = etree.SubElement(trip_el, "stop")
-                conn_el.attrib['busStop'] = pt_veh_event['facility']
-                conn_el.attrib['duration'] = str(5)
+                stop_el = etree.SubElement(trip_el, "stop")
+                stop_el.attrib['busStop'] = pt_veh_event['facility']
+                if len(pt_veh_events) == 1:
+                    trip_el.attrib['depart'] = str(pt_veh_event['time'])
+                stop_el.attrib['duration'] = str(5)
+                if stop_el.findall('jump'):
+                    print(pt_veh_id_us, 'jumped')
         # for k, v in connection.items():
         #     conn_el.attrib[k] = v
     pt_veh_routes_root[:] = sorted(
@@ -605,7 +664,7 @@ def process_events(
                 continue
             if 'end_link' not in road_veh_trip:
                 road_veh_trip['end_link'] = road_veh_trip['last_link']
-                assert road_veh_trip['last_link_allowed'] == True, 'Last link not allowed?'
+                assert road_veh_trip['last_link_allowed'] == True, f'Last link not allowed? {road_veh_id}'
             trip_el = etree.SubElement(road_vehs_root, "trip")
 
             trip_el.attrib['id'] = f'{road_veh_id_us}_{tnum}'
@@ -619,27 +678,35 @@ def process_events(
     )
     road_vehs_tree = road_vehs_root.getroottree()
 
-            #
-            # if 'vehicle' in event and 'person' in event:
-            #     vehicles_persons[event['person']].append(event)
-            # elif 'vehicle' in event:
-            #     if 'link' in event and event['link'] not in allowed_links:
-            #         continue
-            #     # elif 'facility' in event and event['facility'] not in allowed_facilities:
-            #     #     continue
-            #     entities['vehicle'][event['vehicle']].append(event)
-            # elif 'person' in event:
-            #     if 'link' in event and event['link'] not in allowed_links:
-            #         continue
-            #     entities['person'][event['person']].append(event)
-            #
-            # if event['type'] == 'arrival':
-            #     print(event)
+    #######
+    persons_root = etree.Element("routes")
 
-        # if min_time <= event['time'] < max_time:
-        #     if 'link' in event and event['link'] in allowed_links and 'veh' not in event['vehicle']:
-        #         persons[event['vehicle']]['link'].append(event['link'])
-        #         persons[event['vehicle']]['type'].append(event['type'])
-        #         persons[event['vehicle']]['time'].append(event['time'])
+    for person_id, person_data in persons_plans.items():
+        person_id_us = re.sub(r'\s+', '_', person_id)
+        if person_data[0]['type'] != 'PersonLeavesVehicle':
+            continue
+        if len(person_data) > 1:
+            if person_data[1]['type'] == 'arrival':
+                person_el = etree.SubElement(persons_root, "person")
+                person_el.attrib['id'] = person_id_us
+                person_el.attrib['depart'] = 'triggered'
+                first_ride_el = etree.SubElement(person_el, "ride")
+                first_ride_el.attrib['lines'] = re.sub(
+                    r'\s+', '_', person_data[0]['vehicle']
+                )
+                first_ride_el.attrib['busStop'] = person_data[0]['facility']
+                if person_data[1]['link'] in allowed_links:
+                    target_link = person_data[1]['link']
+                else:
+                    actual_geom = net[net['link_id'] == person_data[1]['link']].iloc[0].geometry
+                    if actual_geom.length == 0:
+                        actual_geom = Point(list(actual_geom.coords)[0])
+                    target_link = net_cut.loc[net_cut.distance(actual_geom).idxmin()]['link_id']
+                walk_el = etree.SubElement(person_el, "walk")
+                walk_el.attrib['to'] = target_link
 
-
+    persons_root[:] = sorted(
+        persons_root,
+        key=lambda child: float(child.attrib['depart']) if 'depart' in child.attrib else -1
+    )
+    persons_tree = persons_root.getroottree()
