@@ -1219,10 +1219,10 @@
 		<!-- time deducted from transfer walk leg during transfers between pt legs in order to avoid missing a vehicle by a few seconds due to delays. -->
 		<param name="transferWalkMargin" value="5.0" />
 		<!-- If true, SwissRailRaptor tries to detect when agents cannot board a vehicle in the previous iteration because it is already full and tries to find an alternative route instead. -->
-		<param name="useCapacityConstraints" value="true" />
+		<param name="useCapacityConstraints" value="false" />
 		<param name="useIntermodalAccessEgress" value="false" />
 		<param name="useModeMappingForPassengers" value="false" />
-		<param name="useRangeQuery" value="true" />
+		<param name="useRangeQuery" value="false" />
 		<parameterset type="rangeQuerySettings" >
 			<param name="maxEarlierDeparture_sec" value="300" />
 			<param name="maxLaterDeparture_sec" value="300" />

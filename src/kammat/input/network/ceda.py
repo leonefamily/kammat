@@ -13,6 +13,7 @@ from pathlib import Path
 from collections import defaultdict, Counter
 import networkx as nx
 import momepy
+import copy
 import logging
 import shapely
 import itertools
@@ -27,6 +28,7 @@ from kammat.defaults.constants import LOGGER_FORMAT
 from kammat.output.utils import defaultdict2dict
 
 DIRS = {'FT': 3, 'TF': 2, 'N': 4}
+PT_MODES = ['pt', 'tram', 'rail', 'bus']
 
 logging.basicConfig(
     format=LOGGER_FORMAT,
@@ -115,19 +117,21 @@ def assign_links_nodes_ids(
                 for torid, tolane in torids:
                     allowed = [tuple(e) for *e, attrs in
                                digraph.out_edges(v, keys=True, data=True)
-                               if attrs['ROAD_ID'] == torid]
+                               if attrs['ROAD_ID'] == torid and attrs['modes']
+                               not in PT_MODES
+                               ]
                     for edgeid in allowed:
                         dilanes[lid][lane].append((edgeid, tolane))
                         # print(lid, lane, '->', edge_link[edgeid], tolane)
 
-        digraph.nodes[u]['out'].append(lid)
-        digraph.nodes[v]['in'].append(lid)
+        if attrs['modes'] not in PT_MODES:
+            digraph.nodes[u]['out'].append(lid)
+            digraph.nodes[v]['in'].append(lid)
         digraph.edges[e]['link_id'] = lid
         digraph.edges[e]['node_start'] = fn
         digraph.edges[e]['node_end'] = tn
         digraph.edges[e]['custom'] = False  # !!!
         digraph.edges[e]['kind'] = None  # !!!
-
 
     edge_link = nx.get_edge_attributes(digraph, 'link_id')
     dilanes = defaultdict2dict(dilanes)
@@ -329,7 +333,6 @@ def get_links_accessibility(
             accessible[in_lane] = lane_accessible
         return accessible
     raise KeyError(f'{in_link} has no lane definition')
-
 
 
 def replace_edges(
@@ -773,9 +776,11 @@ def copy_lanes(
         kind: str = 'uturn'
 ):  # !!! remove digraph?
     attr_name = f'no{kind}'
+    attr_name_alt = f'no_{kind}'
     should_copy = (
         True if attr_name not in digraph.edges[inedge[:3]] else
-        not bool(digraph.edges[outedge[:3]][attr_name])
+        (not bool(digraph.edges[outedge[:3]][attr_name]) or
+         not bool(digraph.edges[outedge[:3]][attr_name_alt]))
         )
 
     if should_copy:
@@ -899,6 +904,16 @@ def add_uturn_restrictions(
                     passed = True
                 # if passed:
                 #     logging.info(f"Added potential forks: {potfork}")
+        if len(oes) == 1 and len(ies) == 1 and len(in_road_ids.intersection(out_road_ids)) == 1:
+            continue
+        for ie in ies:
+            if ie[3]['link_id'] in dilanes:
+                continue
+            opp_oes = [oe for oe in oes if oe[3]['ROAD_ID'] == ie[3]['ROAD_ID']]
+            pot_oes = [oe for oe in oes if oe[3]['ROAD_ID'] != ie[3]['ROAD_ID']]
+            if opp_oes:  # only if there are opposite links
+                for pot_oe in pot_oes:
+                    copy_lanes(ie, pot_oe, add_dilanes, digraph, 'iuturn')
 
     add_dilanes = dict(add_dilanes)
     for fromid in add_dilanes:
@@ -1055,6 +1070,9 @@ def prepare_ceda_network(
     shp = read_and_filter_ceda(shp_path)
     lanes_dbf = None if lane_connections_path is None else read_dbf(lane_connections_path)
     shp = set_attributes_to_ceda(shp)
+
+    shp = shp[(shp['capacity'] != 0) & (shp['speed'] != 0)]
+
     if lanes_dbf is not None:
         lanes = get_lane_connections(shp, lanes_dbf)
     else:
@@ -1064,6 +1082,12 @@ def prepare_ceda_network(
     dilanes = assign_links_nodes_ids(digraph, lanes)
 
     if lanes_dbf is not None:
+        ptedges = [
+            e[:3] for e in digraph.edges(data=True, keys=True)
+            if e[-1]['modes'] in PT_MODES
+        ]
+        ptgraph = copy.deepcopy(nx.edge_subgraph(digraph, ptedges))
+        digraph.remove_edges_from(ptedges)
         # map_opposite_edges(digraph)
         uturn_fork_dilanes = add_uturn_restrictions(digraph, dilanes)
         dilanes.update(uturn_fork_dilanes)  # !!!
@@ -1080,6 +1104,7 @@ def prepare_ceda_network(
     else:
         newdilanes = {}
         newdigraph = digraph
+        ptgraph = None
 
     if internal_maneuvers and 'node' in shp.columns:
         simplify_intersections(newdilanes, newdigraph)
@@ -1087,6 +1112,9 @@ def prepare_ceda_network(
     if lanes_dbf is not None:
         ld = get_lane_definitions(newdilanes, newdigraph, common_lane=common_lane)
         write_lane_definitions(ld, lane_definitions_save_path)
+
+    if ptgraph is not None:
+        newdigraph = nx.compose(newdigraph, ptgraph)
 
     transform_unsupported_types(newdigraph)
     nodes, edges = momepy.nx_to_gdf(newdigraph, points=True, lines=True)

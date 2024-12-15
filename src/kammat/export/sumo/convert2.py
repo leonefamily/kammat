@@ -1,7 +1,6 @@
 import copy
 import warnings
 from collections import defaultdict
-from email.policy import default
 from pathlib import Path
 from typing import Union, Dict, List, Set, Tuple, Optional, Sequence
 
@@ -13,7 +12,9 @@ import pandas as pd
 import datetime
 import re
 
-from shapely import Point
+from shapely.geometry import Point, LineString, Polygon
+from shapely.constructive import convex_hull, offset_curve
+from shapely import get_point
 
 from kammat.output.pt import load_pt_schedule, get_lines_routes_vehicles_profiles, get_transit_stops, PtStops
 from kammat.output.road import load_network
@@ -103,7 +104,7 @@ def get_links_to_links(
 
 def extract_routes_stops(
         pt_schedule: lxml.etree.ElementTree
-):
+) -> Dict[str, Dict[str, Dict[str, Union[List[str], str]]]]:
     drop_namespaces(pt_schedule)
     lines_routes_stops = defaultdict(dict)
     for line_el in pt_schedule.getroot().findall('transitLine'):
@@ -152,6 +153,29 @@ def convert_edges(
 ) -> lxml.etree.ElementTree:
     edges = []
     allowed_modes_map = {}
+
+    # dup_geoms = net_cut[net_cut.geometry.duplicated()]['link_id'].unique()
+    dup_fromto_net = net_cut[
+        net_cut[['from_node', 'to_node']].duplicated(keep=False)
+    ]
+    dup_geoms = []
+    for ftnodes, ftnet in dup_fromto_net.groupby(['from_node', 'to_node']):
+        ftmodes = ftnet['modes'].unique()
+        if len(ftmodes) > 1 and ('tram' in ftmodes or 'rail' in ftmodes):
+            dup_geoms.extend(
+                ftnet['link_id'].tolist()
+            )
+    offsets = net_cut.apply(
+        lambda r: 0 if r['link_id'] not in dup_geoms else (
+            0 if r['modes'] in ['tram', 'rail'] else -5
+        ),
+        axis=1
+    )
+
+    onedir_ids = net_cut[
+        ~net_cut.reverse().geometry.isin(net_cut.geometry.tolist())
+    ]['link_id'].unique().tolist()
+
     for en, erow in net_cut.iterrows():
         modes = tuple(set(erow['modes'].split(',')))
         if modes not in allowed_modes_map:
@@ -179,13 +203,16 @@ def convert_edges(
             'allow': str_allowed_modes,
             'sidewalkWidth': str(1.5)
         }
-        geom = list(erow['geometry'].coords)
+        geom = erow.geometry
 
-        if len(geom) > 2:
-            geom_str = ' '.join(
-                f'{c[0]},{c[1]}' for c in geom
-            )
-            edge['shape'] = geom_str
+        if offsets[en] != 0:
+            geom = offset_curve(geom, distance=offsets[en])
+        geom_str = ' '.join(
+            f'{c[0]},{c[1]}' for c in list(geom.coords)
+        )
+        edge['shape'] = geom_str
+        if erow['link_id'] in onedir_ids:
+            edge['spreadType'] = 'center'
         edges.append(edge)
 
     edges_root = etree.Element("edges")
@@ -206,6 +233,7 @@ def convert_stops(
         stop_length: int = 40,
 ) -> lxml.etree.ElementTree:
     stops = []
+    used_links = set()
     for stop_id, stop_data in pt_stops_within.items():
         closest_dists = net_cut.distance(stop_data['geometry'])
         closest_dist = closest_dists.min()
@@ -215,6 +243,7 @@ def convert_stops(
                 f"Stop {stop_id} ({stop_data['name'] if 'name' in stop_data else None}) "
                 f"is {closest_dist} m. away from the closest link {closest_link['link_id']}"
             )
+        used_links.add(closest_link['link_id'])
         stop = {
             'id': stop_id,
             # first lane after sidewalk, may cause problems
@@ -228,6 +257,23 @@ def convert_stops(
         if 'name' in stop_data and stop_data['name'] is not None:
             stop['name'] = stop_data['name']
         stops.append(stop)
+
+    random_link_df = net_cut[~net_cut['link_id'].isin(list(used_links))]
+    if len(random_link_df) != 0:
+        random_link = random_link_df['link_id'].sample(1).iloc[0]
+    else:
+        random_link = net_cut['link_id'].sample(1).iloc[0]
+    dummy_stop = {
+        'id': "DO_NOT_REMOVE",
+        'lane': random_link + '_1',
+        'startPos': str(0),
+        'endPos': str(5),
+        'friendlyPos': 'true',
+        'personCapacity': str(5),
+        'name': 'Move me, but do not delete!',
+        'lines': 'Move me, but do not delete!'
+    }
+    stops.append(dummy_stop)
 
     lines_routes_stops = extract_routes_stops(pt_schedule=pt_schedule)
     additional_root = etree.Element("additional")
@@ -331,6 +377,10 @@ def drop_namespaces(
 def main():
     matsim_net_path = r"output_network.xml.gz"
     matsim_lanes_path = r"output_lanes.xml.gz"
+    matsim_legs_path = r"output_legs.csv.gz"
+    # matsim_net_path = r"../network/netm.xml"
+    # matsim_lanes_path = r"../network/lane_definitions.xml"
+
     matsim_events_path = r"output_events.xml.gz"
     matsim_schedule_path = r"output_transitSchedule.xml.gz"
     matsim_transit_vehicles_path = r"output_transitVehicles.xml.gz"
@@ -410,6 +460,9 @@ def main():
         pt_schedule=pt_schedule
     )
 
+    events_path = matsim_events_path
+    net = matsim_net
+
     write_element_tree(connections_tree, './sumo/connections.con.xml')
     write_element_tree(nodes_tree, './sumo/nodes.nod.xml')
     write_element_tree(edges_tree, './sumo/edges.edg.xml')
@@ -426,7 +479,7 @@ def main():
     # )
 
     proj4_str = gpd.GeoDataFrame({'geometry': [None]}).set_crs(matsim_crs).crs.to_proj4()
-    f'netconvert --node-files=nodes.nod.xml --edge-files=edges.edg.xml --connection-files=connections.con.xml --output-file=net.net.xml --crossings.guess=true --walkingareas=true'
+    f'netconvert --node-files=nodes.nod.xml --edge-files=edges.edg.xml --connection-files=connections.con.xml --output-file=net.net.xml --offset.disable-normalization --crossings.guess=true --walkingareas=true'
     '--proj="{proj4_str}"'
 
 def links_to_links_to_connections(
@@ -468,12 +521,130 @@ def write_element_tree(
         )
 
 
-
-
 def int2time(
         itime: int
 ) -> datetime.time:
     return pd.to_datetime(itime, unit='s').time()
+
+
+def str2sec(
+        td_str: str
+) -> float:
+    return pd.to_timedelta(td_str).total_seconds()
+
+
+def get_closest_link_data(
+        orig_link_id: str,
+        net: gpd.GeoDataFrame,
+        net_cut: gpd.GeoDataFrame
+) -> pd.Series:
+    new_geom = net[net['link_id'] == orig_link_id].iloc[0].geometry.centroid
+    new_link_series = net_cut.loc[net_cut.distance(new_geom).idxmin()]
+    return new_link_series
+
+
+def get_person_walk_leg(
+        leg_row: pd.Series,
+        allowed_links: Set[str],
+        net: gpd.GeoDataFrame,
+        net_cut: gpd.GeoDataFrame,
+        cut_polygon: Polygon,
+        mode: str = 'walk'
+) -> Optional[Dict[str, Union[str, float]]]:
+    if not cut_polygon.intersects(
+        LineString([leg_row['start_geom'], leg_row['end_geom']])
+    ):
+        return
+    start_link = leg_row['start_link']
+    end_link = leg_row['end_link']
+    walk_dict = {
+        'mode': mode,
+        'leg': leg_row.name
+    }
+    if start_link in allowed_links:
+        walk_dict['depart'] = leg_row['dep_time']
+        walk_dict['from'] = start_link
+        if end_link in allowed_links:
+            walk_dict['to'] = end_link
+        else:
+            new_end_link_ser = get_closest_link_data(
+                orig_link_id=end_link,
+                net=net, net_cut=net_cut
+            )
+            walk_dict['to'] = new_end_link_ser['link_id']
+    else:
+        new_start_link_ser = get_closest_link_data(
+            orig_link_id=start_link,
+            net=net, net_cut=net_cut
+        )
+        orig_speed = leg_row['distance'] / leg_row['trav_time']
+        walk_dict['from'] = new_start_link_ser['link_id']
+        if end_link in allowed_links:
+            new_dist = new_start_link_ser['geometry'].centroid.distance(
+                leg_row['end_geom']
+            )
+            new_dep_time = leg_row['dep_time'] + new_dist / orig_speed
+            walk_dict['to'] = end_link
+        else:
+            new_end_link_ser = get_closest_link_data(
+                orig_link_id=end_link,
+                net=net, net_cut=net_cut
+            )
+            new_dist = new_start_link_ser['geometry'].centroid.distance(
+                leg_row['end_geom']
+            )
+            new_dep_time = leg_row['dep_time'] + new_dist / orig_speed
+            walk_dict['to'] = new_end_link_ser['link_id']
+        walk_dict['depart'] = new_dep_time
+    return walk_dict
+
+
+def get_person_pt_leg(
+        leg_row: pd.Series,
+        pt_stops_within: PtStops,
+        lines_routes_stops: Dict[str, Dict[str, Dict[str, Union[List[str], str]]]],
+        mode: str = 'pt'
+) -> Optional[Dict[str, Union[str, float]]]:
+    if (leg_row['access_stop_id'] not in pt_stops_within and
+            leg_row['egress_stop_id'] not in pt_stops_within):
+        return
+    pt_leg = {
+        'mode': mode,
+        'leg': leg_row.name,
+        'depart': 'triggered'
+    }
+    if (leg_row['access_stop_id'] not in pt_stops_within and
+            leg_row['egress_stop_id'] in pt_stops_within):
+        pt_leg['lines'] = leg_row['vehicle_id']
+        pt_leg['vehicle'] = leg_row['vehicle_id']
+        pt_leg['busStop'] = leg_row['egress_stop_id']
+    else:
+        pt_leg['depart'] = leg_row['dep_time'] + leg_row['wait_time']
+        pt_leg['lines'] = get_vehicle_line_name(
+            lines_routes_stops=lines_routes_stops,
+            pt_veh_id=leg_row['vehicle_id']
+        )
+        pt_leg['vehicle'] = leg_row['vehicle_id']
+        if leg_row['egress_stop_id'] not in pt_stops_within:
+            pt_leg['busStop'] = 'DO_NOT_REMOVE'
+        else:
+            pt_leg['busStop'] = leg_row['egress_stop_id']
+        if leg_row['access_stop_id'] in pt_stops_within:
+            pt_leg['fromBusStop'] = leg_row['access_stop_id']
+        else:
+            pt_leg['fromBusStop'] = None
+    return pt_leg
+
+
+def get_vehicle_line_name(
+        lines_routes_stops: Dict[str, Dict[str, Dict[str, Union[List[str], str]]]],
+        pt_veh_id: str
+) -> Optional[str]:
+    for line, line_data in lines_routes_stops.items():
+        for route, route_data in line_data['routes'].items():
+            if pt_veh_id in route_data['vehicles']:
+                line_name = line_data['name']
+                return line_name
 
 
 def process_events(
@@ -482,48 +653,40 @@ def process_events(
         net_cut: gpd.GeoDataFrame,
         pt_stops: PtStops,
         pt_stops_within: PtStops,
+        ignored_links_within: List[str],
         min_time: Union[int, float],
         max_time: Union[int, float],
         ignore_activities: Optional[List[str]],
         vehicles_types: Dict[str, str],
-        vehicles: Dict[str, str]
+        vehicles: Dict[str, str],
+        pt_schedule: lxml.etree.ElementTree,
+        cut_polygon: Polygon
 ):
-    min_time: Union[int, float] = 18000  # 25200
-    max_time: Union[int, float] = 21600  # 28800
-
     allowed_links = set(net_cut['link_id'].tolist())
-    allowed_facilities = set(
-        s for s, sinfo in pt_stops.items()
-        if sinfo['linkRefId'] in allowed_links
-    )
     pt_vehicles = defaultdict(list)
     road_vehicles = defaultdict(list)
-    persons_plans = defaultdict(list)
     seen_pt_vehicles = set()
     pt_drivers = set()
+
+    lines_routes_stops = extract_routes_stops(pt_schedule=pt_schedule)
 
     events = matsim.event_reader(
         events_path,
     )
     for i, event in enumerate(events):
-        if event['type'] == 'vehicle enters traffic':
-            is_pt = vehicles_types[
-                re.sub(r'\s+', '_', vehicles[event['vehicle']])
-            ]['isPt']
-            if is_pt:
-                pt_drivers.add(event['person'])
+        if event['type'] == 'TransitDriverStarts':
+            pt_drivers.add(event['driverId'])
+            seen_pt_vehicles.add(event['vehicleId'])
         if min_time <= event['time'] < max_time:
             if event['type'] in ['VehicleArrivesAtFacility',
                                  'VehicleDepartsAtFacility']:
-                is_pt = vehicles_types[
-                    re.sub(r'\s+', '_', vehicles[event['vehicle']])
-                ]['isPt']
-                if event['facility'] in pt_stops_within:
-                    if is_pt:
-                        pt_vehicles[event['vehicle']].append(event)
-                        seen_pt_vehicles.add(event['vehicle'])
+                # is_pt = vehicles_types[
+                #     re.sub(r'\s+', '_', vehicles[event['vehicle']])
+                # ]['isPt']
+                if event['facility'] in pt_stops_within and event['vehicle'] in seen_pt_vehicles:
+                    pt_vehicles[event['vehicle']].append(event)
                 else:
-                    if is_pt and event['vehicle'] in pt_vehicles:
+                    if event['vehicle'] in seen_pt_vehicles and len(pt_vehicles[event['vehicle']]) > 0:
                         if pt_vehicles[event['vehicle']][-1]['facility'] is not None:
                             event_new = copy.deepcopy(event)
                             event_new['facility'] = None
@@ -531,10 +694,7 @@ def process_events(
                         else:
                             continue
             elif event['type'] == 'entered link':
-                is_pt = vehicles_types[
-                    re.sub(r'\s+', '_', vehicles[event['vehicle']])
-                ]['isPt']
-                if is_pt:
+                if event['vehicle'] in seen_pt_vehicles:
                     continue
                 if event['link'] in allowed_links:
                     if event['vehicle'] not in road_vehicles or not road_vehicles[event['vehicle']]:
@@ -564,29 +724,33 @@ def process_events(
                             'last_link': event['link'],
                             'last_link_allowed': False,
                         })
-            elif event['type'] == 'waitingForPt' and event['atStop'] in pt_stops_within:
-                persons_plans[event['person']].append(event)
-            elif event['type'] in ['PersonEntersVehicle', 'PersonLeavesVehicle']:
-                if event['person'] in pt_drivers:
-                    continue
-                if event['vehicle'] in seen_pt_vehicles:
-                    last_pt_event = pt_vehicles[event['vehicle']][-1]
-                    if last_pt_event['facility'] in pt_stops_within:
-                        persons_plans[event['person']].append(event)
-                        persons_plans[event['person']][-1]['facility'] = last_pt_event['facility']
-            elif event['type'] == 'arrival':
-                if event['person'] in persons_plans:
-                    last_event = persons_plans[event['person']][-1]
-                    if event['legMode'] == 'walk' and last_event['type'] == 'PersonLeavesVehicle':
-                        persons_plans[event['person']].append(event)
-
         elif event['time'] >= max_time:
             break
         if i % 1000000 == 0:
             tm = int2time(event['time'])
             print(f'Event {i}, time {tm}')
+    pt_vehicles = {k: v for k, v in pt_vehicles.items() if v}
 
-    #####
+    return pt_vehicles, road_vehicles
+
+
+links_start_end = {
+    row['link_id']: [
+        list(get_point(row.geometry, 0).coords)[0],
+        list(get_point(row.geometry, -1).coords)[0]
+    ] for i, row in net_cut.iterrows()
+}
+
+
+def convert_pt_vehicles(
+        pt_vehicles: Dict[str, List[Dict[str, str]]],
+        vehicles: Dict[str, str],
+        vehicles_types: Dict[str, Dict[str, str]],
+        net_cut: gpd.GeoDataFrame,
+        lines_routes_stops: Dict[str, Dict[str, Dict[str, Union[List[str], str]]]],
+        use_coords: bool = False,
+        links_start_end: Optional[Dict[str, List[Tuple[float, float]]]] = None
+) -> lxml.etree.ElementTree:
     pt_veh_routes_root = etree.Element("routes")
     for vehicle_type, vehicle_data in vehicles_types.items():
         if vehicle_data['isPt']:
@@ -604,15 +768,11 @@ def process_events(
         trip_el.attrib['id'] = pt_veh_id_us
         trip_el.attrib['type'] = re.sub(r'\s+', '_', vehicles[pt_veh_id])
 
-        line_name = None
-        for line, line_data in lines_routes_stops.items():
-            for route, route_data in line_data['routes'].items():
-                if pt_veh_id in route_data['vehicles']:
-                    line_name = line_data['name']
+        line_name = get_vehicle_line_name(
+            lines_routes_stops=lines_routes_stops,
+            pt_veh_id=pt_veh_id
+        )
         trip_el.attrib['line'] = line_name
-
-        # if pt_veh_id_us == 'veh_19628_bus':
-        #     raise
 
         for pt_veh_event in pt_veh_events:
             if pt_veh_event['facility'] is None:
@@ -637,7 +797,7 @@ def process_events(
                 if len(pt_veh_events) == 1:
                     trip_el.attrib['depart'] = str(pt_veh_event['time'])
                 stop_el.attrib['duration'] = str(5)
-                if stop_el.findall('jump'):
+                if trip_el.findall('jump'):
                     print(pt_veh_id_us, 'jumped')
         # for k, v in connection.items():
         #     conn_el.attrib[k] = v
@@ -646,8 +806,17 @@ def process_events(
         key=lambda child: float(child.attrib['depart']) if 'depart' in child.attrib else -1
     )
     pt_vehs_tree = pt_veh_routes_root.getroottree()
+    return pt_vehs_tree
 
-    #######
+
+def convert_road_vehicles(
+        road_vehicles: Dict[str, List[Dict[str, str]]],
+        vehicles: Dict[str, str],
+        vehicles_types: Dict[str, Dict[str, str]],
+        net_cut: gpd.GeoDataFrame,
+        use_coords: bool = False,
+        links_start_end: Optional[Dict[str, List[Tuple[float, float]]]] = None
+):
     road_vehs_root = etree.Element("routes")
     for vehicle_type, vehicle_data in vehicles_types.items():
         if not vehicle_data['isPt']:
@@ -664,49 +833,175 @@ def process_events(
                 continue
             if 'end_link' not in road_veh_trip:
                 road_veh_trip['end_link'] = road_veh_trip['last_link']
-                assert road_veh_trip['last_link_allowed'] == True, f'Last link not allowed? {road_veh_id}'
+                assert road_veh_trip['last_link_allowed'] is True, f'Last link not allowed? {road_veh_id}'
             trip_el = etree.SubElement(road_vehs_root, "trip")
-
+            trip_el.attrib['type'] = vehicles[road_veh_id]
             trip_el.attrib['id'] = f'{road_veh_id_us}_{tnum}'
             trip_el.attrib['depart'] = str(road_veh_trip['start_time'])
-            trip_el.attrib['from'] = str(road_veh_trip['start_link'])
-            trip_el.attrib['to'] = str(road_veh_trip['end_link'])
+            if use_coords:
+                trip_el.attrib['fromXY'] = ','.join(
+                    str(c) for c in links_start_end[road_veh_trip['start_link']][0]
+                )
+                trip_el.attrib['toXY'] = ','.join(
+                    str(c) for c in links_start_end[road_veh_trip['end_link']][-1]
+                )
+            else:
+                trip_el.attrib['from'] = str(road_veh_trip['start_link'])
+                trip_el.attrib['to'] = str(road_veh_trip['end_link'])
 
     road_vehs_root[:] = sorted(
         road_vehs_root,
         key=lambda child: float(child.attrib['depart']) if 'depart' in child.attrib else -1
     )
     road_vehs_tree = road_vehs_root.getroottree()
+    return road_vehs_tree
 
-    #######
+
+def convert_persons(
+        legs_path: Union[str, Path],
+        net: gpd.GeoDataFrame,
+        net_cut: gpd.GeoDataFrame,
+        pt_vehicles: Dict[str, List[Dict[str, str]]],
+        min_time: Union[float, int],
+        max_time: Union[float, int],
+        cut_polygon: Polygon,
+        pt_stops_within: PtStops,
+        lines_routes_stops: Dict[str, Dict[str, Dict[str, Union[List[str], str]]]],
+        use_coords: bool = False,
+        links_start_end: Optional[Dict[str, List[Tuple[float, float]]]] = None
+) -> lxml.etree.ElementTree:
+    allowed_links = set(net['link_id'].tolist())
+    legs_df = pd.read_csv(
+            legs_path,
+            sep=';',
+            decimal=',',
+            converters={
+                'person': str,
+                'vehicle_id': str,
+                'access_stop': str,
+                'egress_stop': str,
+                'start_link': str,
+                'end_link': str,
+                'mode': str,
+                'transit_line': str,
+                'transit_route': str,
+                'dep_time': str2sec,
+                'wait_time': str2sec,
+                'trav_time': str2sec
+            }
+    )
+    legs_df = legs_df[
+        legs_df['mode'].isin(['pt', 'walk', 'bike']) &
+        (legs_df['dep_time'] < max_time) &
+        ((legs_df['dep_time'] + legs_df['trav_time']) > min_time)
+    ]
+
+    legs_df['start_geom'] = gpd.points_from_xy(x=legs_df['start_x'], y=legs_df['start_y'])
+    legs_df['end_geom'] = gpd.points_from_xy(x=legs_df['end_x'], y=legs_df['end_y'])
+
     persons_root = etree.Element("routes")
-
-    for person_id, person_data in persons_plans.items():
-        person_id_us = re.sub(r'\s+', '_', person_id)
-        if person_data[0]['type'] != 'PersonLeavesVehicle':
-            continue
-        if len(person_data) > 1:
-            if person_data[1]['type'] == 'arrival':
-                person_el = etree.SubElement(persons_root, "person")
-                person_el.attrib['id'] = person_id_us
-                person_el.attrib['depart'] = 'triggered'
-                first_ride_el = etree.SubElement(person_el, "ride")
-                first_ride_el.attrib['lines'] = re.sub(
-                    r'\s+', '_', person_data[0]['vehicle']
-                )
-                first_ride_el.attrib['busStop'] = person_data[0]['facility']
-                if person_data[1]['link'] in allowed_links:
-                    target_link = person_data[1]['link']
+    for trip_id, trip_df in legs_df.groupby('trip_id'):
+        modes = trip_df['mode'].unique().tolist()
+        # if trip_df.iloc[0]['dep_time'] > max_time:
+        #     continue
+        if 'pt' in modes or 'walk' in modes:
+            pre_person_legs = [[]]
+            for lid, leg_row in trip_df.reset_index(drop=True).iterrows():
+                if leg_row['dep_time'] > max_time:
+                    break
+                if leg_row['mode'] == 'walk':
+                    person_leg = get_person_walk_leg(
+                        leg_row=leg_row,
+                        allowed_links=allowed_links,
+                        net=net,
+                        net_cut=net_cut,
+                        cut_polygon=cut_polygon
+                    )
+                    # if person_leg is not None and (
+                    #         person_leg['depart'] < min_time or
+                    #         person_leg['depart'] > max_time
+                    #     ):
+                    #     continue
+                elif leg_row['mode'] == 'pt':
+                    if leg_row['vehicle_id'] not in pt_vehicles:
+                        continue
+                    person_leg = get_person_pt_leg(
+                        leg_row=leg_row,
+                        pt_stops_within=pt_stops_within,
+                        lines_routes_stops=lines_routes_stops
+                    )
+                    if person_leg is not None and person_leg['depart'] == 'triggered' and pre_person_legs[-1]:
+                        pre_person_legs.append([])
                 else:
-                    actual_geom = net[net['link_id'] == person_data[1]['link']].iloc[0].geometry
-                    if actual_geom.length == 0:
-                        actual_geom = Point(list(actual_geom.coords)[0])
-                    target_link = net_cut.loc[net_cut.distance(actual_geom).idxmin()]['link_id']
-                walk_el = etree.SubElement(person_el, "walk")
-                walk_el.attrib['to'] = target_link
+                    person_leg = None
+                if person_leg is not None:
+                    pre_person_legs[-1].append(person_leg)
+
+            for j, pre_person_sublegs in enumerate(pre_person_legs):
+                while (
+                        len(pre_person_sublegs) > 0 and
+                        pre_person_sublegs[0]['mode'] == 'pt' and
+                        pre_person_sublegs[0]['busStop'] == 'DO_NOT_REMOVE'
+                ):
+                    pre_person_sublegs.pop(0)
+                if pre_person_sublegs:
+                    # if (len(pre_person_sublegs) == 1 and
+                    #     pre_person_sublegs[0]['mode'] == 'pt' and
+                    #     pre_person_sublegs[0]['busStop'] == 'DO_NOT_REMOVE'):
+                    #     continue
+                    person_el = etree.SubElement(persons_root, "person")
+                    person_el.attrib['id'] = trip_id + f'_{j}'
+                    person_el.attrib['depart'] = str(pre_person_sublegs[0]['depart'])
+                    for i, person_leg in enumerate(pre_person_sublegs):
+                        if person_leg['mode'] == 'pt':
+                            tag = 'ride'
+                        elif person_leg['mode'] == 'walk':
+                            tag = 'walk'
+                        else:
+                            raise ValueError(f"Unsupported mode {person_leg['mode']}")
+                        leg_el = etree.SubElement(person_el, tag)
+                        if i == 0 and person_leg['mode'] != 'pt':
+                            if use_coords:
+                                leg_el.attrib['fromXY'] = ','.join(
+                                    str(c) for c in links_start_end[person_leg['from']][0]
+                                )
+                            else:
+                                leg_el.attrib['from'] = person_leg['from']
+                        if i != 0 and pre_person_sublegs[i - 1]['mode'] == 'walk' and person_leg['mode'] == 'pt':
+                            last_walk_el = person_el.xpath('./walk')[-1]
+                            if 'to' in last_walk_el.attrib:
+                                del last_walk_el.attrib['to']
+                            if 'toXY' in last_walk_el.attrib:
+                                del last_walk_el.attrib['toXY']
+                            last_walk_el.attrib['busStop'] = person_leg['fromBusStop']
+                        if person_leg['mode'] == 'pt':
+                            if i == 0:
+                                person_el.attrib['depart'] = 'triggered'
+                                leg_el.attrib['lines'] = person_leg['vehicle']
+                            else:
+                                leg_el.attrib['lines'] = person_leg['lines']
+                            leg_el.attrib['busStop'] = person_leg['busStop']
+                        if person_leg['mode'] == 'walk':
+                            if use_coords:
+                                leg_el.attrib['toXY'] = ','.join(
+                                    str(c) for c in links_start_end[person_leg['to']][-1]
+                                )
+                            else:
+                                leg_el.attrib['to'] = person_leg['to']
 
     persons_root[:] = sorted(
         persons_root,
-        key=lambda child: float(child.attrib['depart']) if 'depart' in child.attrib else -1
+        key=lambda child: str_to_float(child.attrib['depart']) if 'depart' in child.attrib else -1
     )
     persons_tree = persons_root.getroottree()
+    return persons_tree
+
+
+def str_to_float(
+        string: str,
+        if_failed: float = -1.0
+) -> float:
+    try:
+        return float(string)
+    except:
+        return if_failed

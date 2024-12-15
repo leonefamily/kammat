@@ -66,16 +66,16 @@ def get_events_counts(
         # process_agents_links: bool = True
         ) -> Dict[str, Dict[float, Dict[str, int]]]:
     """
-    Parse events and.
+    Parse events and extract info about counts on links, turns, PT.
 
     Parameters
     ----------
     events_path : Union[str, Path]
         DESCRIPTION.
     time_limit : int, optional
-        DESCRIPTION. The default is 24.
+        What is the end of parsing. The default is 86400.
     aggregate_by : int, optional
-        DESCRIPTION. The default is 1.
+        Only affects turns and car/truck counts. The default is 900.
     city_logistics_flags : Union[List[str], Tuple[str], Set[str]]
         DESCRIPTION.
 
@@ -116,6 +116,9 @@ def get_events_counts(
         lambda: {'link': None, 'type': None}
         )
     pt_drivers = set()
+    pt_vehs = set()
+    pt_veh_departures = {}
+    pt_veh_lines = {}
 
     for i, event in enumerate(events):
         # parse time and round it to the closest timestep
@@ -149,21 +152,40 @@ def get_events_counts(
         # handle pt passengers
         elif event['type'] == 'TransitDriverStarts':
             pt_drivers.add(event['driverId'])
-        elif event['type'] == 'VehicleArrivesAtFacility':
-            pt_counts[event['vehicle']].append(
-                {'stop': event['facility'],
-                 'arrival': event['time'],
-                 'entered': 0, 'left': 0}
-                )
-        elif event['type'] == 'VehicleDepartsAtFacility':
-            pt_counts[event['vehicle']][-1]['departure'] = event['time']
-        elif event['type'] == 'PersonEntersVehicle' and event['vehicle'] in pt_counts:
+            pt_veh_departures[event['vehicleId']] = event['departureId']
+            pt_veh_lines[event['vehicleId']] = event['transitLineId']
+            pt_vehs.add(event['vehicleId'])
+        elif event['type'] == 'VehicleArrivesAtFacility' and event['vehicle'] in pt_vehs:
+            pt_counts[
+                pt_veh_departures[event['vehicle']],
+                pt_veh_lines[event['vehicle']],
+                event['vehicle']
+            ].append({
+                'stop': event['facility'],
+                'arrival': event['time'],
+                'entered': 0,
+                'left': 0
+            })
+        elif event['type'] == 'VehicleDepartsAtFacility' and event['vehicle'] in pt_vehs:
+            pt_counts[
+                pt_veh_departures[event['vehicle']],
+                pt_veh_lines[event['vehicle']],
+                event['vehicle']
+            ][-1]['departure'] = event['time']
+        elif event['type'] == 'PersonEntersVehicle' and event['vehicle'] in pt_vehs:
             if event['person'] not in pt_drivers:
-                pt_counts[event['vehicle']][-1]['entered'] += 1
-        elif event['type'] == 'PersonLeavesVehicle' and event['vehicle'] in pt_counts:
+                pt_counts[
+                    pt_veh_departures[event['vehicle']],
+                    pt_veh_lines[event['vehicle']],
+                    event['vehicle']
+                ][-1]['entered'] += 1
+        elif event['type'] == 'PersonLeavesVehicle' and event['vehicle'] in pt_vehs:
             if event['person'] not in pt_drivers:
-                pt_counts[event['vehicle']][-1]['left'] += 1
-
+                pt_counts[
+                    pt_veh_departures[event['vehicle']],
+                    pt_veh_lines[event['vehicle']],
+                    event['vehicle']
+                ][-1]['left'] += 1
         if i % 1000000 == 0:
             tm = td(seconds=event['time'])
             logging.info(f'Event {i}, time {tm}')
@@ -202,9 +224,6 @@ def pt_counts_to_df(
 
     vehsdf = pd.concat(vehdfs)
     return vehsdf
-
-
-
 
 
 def write_link_counts(
@@ -264,9 +283,9 @@ def write_link_turns(
 
 
 def write_pt_counts(
-        pt_counts: Dict[str, Dict[str, Union[str, Union[str, int, float]]]],
+        pt_counts: Dict[Tuple[str, str, str], Dict[str, Union[str, Union[str, int, float]]]],
         path: Union[str, Path]
-        ):
+):
     """
     
 
@@ -278,15 +297,19 @@ def write_pt_counts(
         DESCRIPTION.
 
     """
-    if Path(path).suffix.endswith('.gz'):
-        write_json_gz(pt_counts, path)
+    if isinstance(next(iter(pt_counts)), tuple):
+        npt_counts = {' || '.join(k): v for k, v in pt_counts.items()}
     else:
-        write_json(pt_counts, path)
+        npt_counts = pt_counts
+    if Path(path).suffix.endswith('.gz'):
+        write_json_gz(npt_counts, path)
+    else:
+        write_json(npt_counts, path)
 
 
 def read_pt_counts(
         path: Union[str, Path]
-        ) -> Dict[str, Dict[str, Union[str, Union[str, int, float]]]]:
+        ) -> Dict[Union[str, Tuple[str, str, str]], Dict[str, Union[str, Union[str, int, float]]]]:
     """
     
 
@@ -305,6 +328,8 @@ def read_pt_counts(
         pt_counts = read_json_gz(path)
     else:
         pt_counts = read_json(path)
+    if ' || ' in next(iter(pt_counts)):
+        pt_counts = {tuple(k.split(' || ')): v for k, v in pt_counts.items()}
     return pt_counts
 
 

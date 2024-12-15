@@ -30,7 +30,7 @@ from kammat.defaults.constants import CSV_STYLE
 Profiles = Dict[str, Dict[str, List[Tuple[str, List[str]]]]]
 Lrvs = Dict[str, List[str]]
 PtStops = Dict[str, Dict[str, str]]
-PtCounts = Dict[str, Dict[str, Union[str, int, float]]]
+PtCounts = Dict[Union[str, Tuple[str, str, str]], Dict[str, Union[str, int, float]]]
 
 
 def load_pt_schedule(
@@ -214,11 +214,13 @@ def get_pt_stats(
         pt_schedule, pt_stops, lines,
         link_ids=None if not link_id else [link_id]
     )
+    pt_counts_is_old = isinstance(next(iter(pt_counts)), str)
 
-    for lname, rid, veh, mode in zip(*lrvs.values()):
+    for lname, lid, rid, veh, dep, mode in zip(*lrvs.values()):
         cumulative = 0
         route_profile = profiles[lname][rid]
-        for i, info in enumerate(pt_counts[veh]):
+        picker = veh if pt_counts_is_old else (dep, lid, veh)
+        for i, info in enumerate(pt_counts[picker]):
 
             if info['arrival'] < start:
                 continue
@@ -594,8 +596,10 @@ def get_lines_routes_vehicles_profiles(
     """
     lrvs = {
         'lines': [],
+        'lineids': [],
         'routes': [],
         'vehicles': [],
+        'departures': [],
         'modes': []
     }
 
@@ -646,8 +650,10 @@ def get_lines_routes_vehicles_profiles(
             rprofile = get_route_profile(route_element, pt_stops)
             profiles[line][route] = rprofile
             lrvs['lines'].append(line)
+            lrvs['lineids'].append(parent_attr['id'])
             lrvs['routes'].append(route)
             lrvs['vehicles'].append(element.attrib['vehicleRefId'])
+            lrvs['departures'].append(element.attrib['id'])
             lrvs['modes'].append(mode)
             if isunnamed:
                 unnamed_n += 1
@@ -685,8 +691,9 @@ def get_pt_stops_time_stats(
         pt_schedule, pt_stops, lines=lines, link_ids=link_ids
     )
     rid_allowed_stops = defaultdict(list)
+    pt_counts_is_old = isinstance(next(iter(pt_counts)), str)
 
-    for lname, rid, veh, mode in zip(*lrvs.values()):
+    for lname, lid, rid, veh, dep, mode in zip(*lrvs.values()):
         cumulative = 0
         route_profile = profiles[lname][rid]
 
@@ -708,7 +715,8 @@ def get_pt_stops_time_stats(
         else:
             allowed_stops = set(info['stop'] for info in pt_counts[veh])
 
-        for info in pt_counts[veh]:
+        picker = veh if pt_counts_is_old else (dep, lid, veh)
+        for info in pt_counts[picker]:
 
             if info['arrival'] < start:
                 cumulative = cumulative + info['entered'] - info['left']
@@ -765,11 +773,13 @@ def get_pt_links_time_stats(
     lrvs, profiles = get_lines_routes_vehicles_profiles(
         pt_schedule, pt_stops, lines=lines, link_ids=link_ids
     )
+    pt_counts_is_old = isinstance(next(iter(pt_counts)), str)
 
-    for lname, rid, veh, mode in zip(*lrvs.values()):
+    for lname, lid, rid, veh, dep, mode in zip(*lrvs.values()):
         cumulative = 0
         route_profile = profiles[lname][rid]
-        for i, info in enumerate(pt_counts[veh]):
+        picker = veh if pt_counts_is_old else (dep, lid, veh)
+        for i, info in enumerate(pt_counts[picker]):
 
             if info['arrival'] < start:
                 cumulative = cumulative + info['entered'] - info['left']

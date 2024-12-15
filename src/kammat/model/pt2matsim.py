@@ -80,7 +80,7 @@ def run_pt2matsim(
         'outputNetworkFile': output_net_path,
         'outputScheduleFile': output_schedule_path,
         'numOfThreads': number_of_threads,
-        'modesToKeepOnCleanUp': 'car,truck,para',  # for potential paratransit
+        'modesToKeepOnCleanUp': 'car,truck,para,tram,rail,bus',  # for potential paratransit
         # 'scheduleFreespeedModes': 'pt,bus,tram,rail'
         # !!! add more in function call
     }

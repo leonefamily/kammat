@@ -62,6 +62,7 @@ def run_command(
     proc = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
+    print(command)
     output, error = proc.communicate()
     if save_log:
         with open(CACHE_SETTINGS_PATH + '/log.txt', 'w') as f:
