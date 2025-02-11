@@ -26,6 +26,7 @@ from itertools import chain
 from math import atan2, degrees, dist
 from kammat.defaults.constants import LOGGER_FORMAT
 from kammat.output.utils import defaultdict2dict
+from kammat.network.utils import hash_coordinate
 
 DIRS = {'FT': 3, 'TF': 2, 'N': 4}
 PT_MODES = ['pt', 'tram', 'rail', 'bus']
@@ -89,14 +90,17 @@ def set_attributes_to_ceda(
 
 def assign_links_nodes_ids(
         digraph: nx.MultiDiGraph,
-        lanes: Optional[LaneConnections] = None
+        lanes: Optional[LaneConnections] = None,
+        hash_nodes: bool = True
 ) -> LaneConnections:
 
     dilanes = defaultdict(lambda: defaultdict(list))
 
-
     for i, n in enumerate(digraph.nodes):
-        digraph.nodes[n]['nodenum'] = i
+        if hash_coordinate:
+            digraph.nodes[n]['nodenum'] = hash_coordinate(n)
+        else:
+            digraph.nodes[n]['nodenum'] = i
         digraph.nodes[n]['previous'] = None
         digraph.nodes[n]['in'] = []
         digraph.nodes[n]['out'] = []
@@ -224,7 +228,7 @@ def get_lane_definitions(
     for fromlink, tolinkdict in newdilanes.items():
 
         e = link_edge[fromlink]
-        newdigraph.edges[e]['permlanes'] = len(tolinkdict)
+        # newdigraph.edges[e]['permlanes'] = len(tolinkdict)  # TODO: does it make sense?
         ldata = newdigraph.edges[e]
         ld += f'{_ws(1)}<lanesToLinkAssignment linkIdRef="{fromlink}">\n'
 
@@ -363,15 +367,19 @@ def replace_edges(
 
 def simplify_intersections(
         newdilanes: LaneConnections,
-        newdigraph: nx.MultiDiGraph
+        newdigraph: nx.MultiDiGraph,
+        hash_nodes: bool = True
 ):
     intersection_ids = {
         data['node'] for *e, data in newdigraph.edges(data=True)
         if not pd.isnull(data['node']) and data['node'] != 0
         }
-    next_nodenum = max(
-        data['nodenum'] for n, data in newdigraph.nodes(data=True)
+    if not hash_nodes:
+        next_nodenum = max(
+            data['nodenum'] for n, data in newdigraph.nodes(data=True)
         ) + 1
+    else:
+        next_nodenum = None
 
     for iid in intersection_ids:
         marked_edges = [
@@ -412,7 +420,9 @@ def simplify_intersections(
                 out_accessibility[in_link] = accessibility
             intersection_center = list(
                 MultiPoint(marked_nodes).convex_hull.centroid.coords
-                )[0]
+            )[0]
+            if hash_nodes:
+                next_nodenum = hash_coordinate(intersection_center)
             center_attributes = {
                 'nodenum': next_nodenum,
                 'previous': None,
@@ -426,7 +436,8 @@ def simplify_intersections(
             replace_edges(in_edges, 'in', intersection_center, next_nodenum, newdigraph)
             for *marked_edge, key, data in marked_edges:
                 newdigraph.remove_edge(*marked_edge)
-            next_nodenum += 1
+            if not hash_nodes:
+                next_nodenum += 1
         except RuntimeError as e:
             print(f'Node {int(iid)}:', e)
 

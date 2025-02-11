@@ -1615,7 +1615,10 @@ def estimate_total_vehicles_simple(
     for route in routes:
         if route.route_short_name in visited:
             continue
-        qv, total_time, deps, ivl = get_vehicles_count(route)
+        qv, total_time, deps, ivl = get_vehicles_count(
+            route=route,
+            travel_time_mean=travel_time_mean
+        )
         vehmodels[route.vehicle_model] += qv
         routes_stats.append({
             'route': str(route.route_short_name),

@@ -11,10 +11,11 @@ import pandas as pd
 from pathlib import Path
 from datetime import timedelta as td
 from collections import defaultdict
-from typing import Union, List, Tuple, Set, Dict  # , Sequence
+from typing import Union, List, Tuple, Set, Dict, Optional  # , Sequence
 
 from kammat.output.utils import (
-    get_timeline, round_timestep, read_json, read_json_gz, write_json, write_json_gz
+    get_timeline, round_timestep, read_json, read_json_gz,
+    write_json, write_json_gz, DbHandler
 )
 
 UNITS_IN_SECONDS = {
@@ -53,8 +54,8 @@ def guess_mode(
 
 def is_citylog(
         vehicle: str = None,
-        citylog_flags: Union[List[str], Tuple[str], Set[str]] = None
-        ):
+        citylog_flags: Optional[Union[List[str], Tuple[str], Set[str]]] = None
+):
     return any(f in vehicle for f in citylog_flags)
 
 
@@ -62,9 +63,10 @@ def get_events_counts(
         events_path: Union[str, Path],
         time_limit: int = 86400,
         aggregate_by: int = 900,
-        city_logistics_flags: Union[List[str], Tuple[str], Set[str]] = None,
-        # process_agents_links: bool = True
-        ) -> Dict[str, Dict[float, Dict[str, int]]]:
+        city_logistics_flags: Optional[Union[List[str], Tuple[str], Set[str]]] = None,
+        output_road_db_path: Optional[Union[str, Path]] = None,
+        db_flush_interval: int = 10_000_000
+) -> Dict[str, Dict[float, Dict[str, int]]]:
     """
     Parse events and extract info about counts on links, turns, PT.
 
@@ -87,68 +89,86 @@ def get_events_counts(
     """
     events = matsim.event_reader(
         events_path,
-        types=('entered link,left link,VehicleArrivesAtFacility,'
-               'VehicleDepartsAtFacility,PersonEntersVehicle,'
-               'PersonLeavesVehicle,TransitDriverStarts')
+        types=(
+            'entered link,left link,VehicleArrivesAtFacility,'
+            'VehicleDepartsAtFacility,PersonEntersVehicle,'
+            'PersonLeavesVehicle,TransitDriverStarts,'
+            'vehicle enters traffic,vehicle leaves traffic'
+            # 'actstart,actend'  # except for `pt interaction`
         )
+    )
     timeline = get_timeline(
         stop=time_limit,
         aggregate_by=aggregate_by,
         aggregate_unit='s'
-        )
+    )
 
     counts = {
         mode: {timestep: defaultdict(int) for timestep in timeline}
         for mode in EVENTS_MODES
-        }
+    }
     turns = {
         mode: {timestep: defaultdict(int) for timestep in timeline}
         for mode in EVENTS_MODES
-        }
-    pt_counts = defaultdict(list)  # vehicle_id
+    }
+    pt_counts = defaultdict(list)
 
-    # agents_links = defaultdict(list)
-    # links_agents = {
-    #     mode: {timestep: defaultdict(list) for timestep in timeline}
-    #     for mode in EVENTS_MODES
-    #     }
     vehicle_cache = defaultdict(
         lambda: {'link': None, 'type': None}
-        )
+    )
     pt_drivers = set()
     pt_vehs = set()
     pt_veh_departures = {}
     pt_veh_lines = {}
 
+    if output_road_db_path is not None:
+        dbh = DbHandler(
+            db_path=output_road_db_path,
+            flush_interval=db_flush_interval
+        )
+    else:
+        dbh = None
+
     for i, event in enumerate(events):
         # parse time and round it to the closest timestep
-        if event['time'] >= time_limit:
+        if event['time'] > time_limit:
             break
-
-        if event['type'] in ['entered link', 'left link']:
-            # handle vehicles
+        if event['type'] == 'vehicle enters traffic':
+            if dbh is not None:
+                # maybe come up with something prettier...
+                dbh._vehicle_trip_nums[event['vehicle']] += 1
+        elif event['type'] == 'vehicle leaves traffic':
+            vehicle_cache[event['vehicle']] = {
+                'link': None, 'type': event['type']
+            }
+        elif event['type'] in ['entered link', 'left link']:
+            # handle road vehicles
             timestep = round_timestep(
                 current=event['time'],
                 aggregate_by=aggregate_by,
                 aggregate_unit='s'
-                )
-
+            )
             mode = guess_mode(event['vehicle'])
             if event['type'] == 'entered link' and mode != 'pt':
+
+                if dbh is not None:
+                    dbh.process_entered(
+                        event=event,
+                        mode=mode,
+                        last_visited_link=(
+                            vehicle_cache[event['vehicle']]['link']
+                        )
+                    )
                 counts[mode][timestep][event['link']] += 1
-                # if process_agents_links:
-                #     agents_links[mode][event['vehicle']].append(
-                #         (event['link'], event['time'])
-                #         )
+
                 if vehicle_cache[event['vehicle']]['type'] == 'left link':
                     connection = (
                         vehicle_cache[event['vehicle']]['link'], event['link']
-                        )
+                    )
                     turns[mode][timestep][connection] += 1
-
             vehicle_cache[event['vehicle']] = {
                 'link': event['link'], 'type': event['type']
-                }
+            }
         # handle pt passengers
         elif event['type'] == 'TransitDriverStarts':
             pt_drivers.add(event['driverId'])
@@ -190,14 +210,16 @@ def get_events_counts(
             tm = td(seconds=event['time'])
             logging.info(f'Event {i}, time {tm}')
 
+    if dbh is not None:
+        # final flush to write remainings
+        dbh.flush()
+
     for mode in counts:
         for timestep in counts[mode]:
             counts[mode][timestep] = dict(counts[mode][timestep])
             turns[mode][timestep] = dict(turns[mode][timestep])
-    # for mode in agents_links:
-    #     agents_links[mode] = dict(agents_links[mode])
 
-    return counts, pt_counts, turns  #, agents_links
+    return counts, pt_counts, turns
 
 
 def pt_counts_to_df(
