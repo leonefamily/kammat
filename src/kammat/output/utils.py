@@ -305,6 +305,10 @@ class DbHandler:
             self._next_vehicle_id += 1
         vid = self._vehicle_ids[veh]
 
+        if last_visited_link is not None:
+            if last_visited_link not in self._link_ids:
+                self._link_ids[last_visited_link] = self._next_link_id
+                self._next_link_id += 1
         if link not in self._link_ids:
             self._link_ids[link] = self._next_link_id
             self._next_link_id += 1
@@ -317,10 +321,15 @@ class DbHandler:
             self._next_vehicle_trip_id += 1
         veh_trip_id = self._vehicle_trip_ids[vid_trip_num]
 
+        if isinstance(last_visited_link, str):
+            lastlink = self._link_ids[last_visited_link]
+        else:
+            lastlink = last_visited_link
+
         self._vehicle_data_buffer.append((
             veh_trip_id,
             lid,
-            last_visited_link,
+            lastlink,
             int(event['time'])
         ))
 
@@ -328,10 +337,11 @@ class DbHandler:
             return
 
         if len(self._vehicle_data_buffer) % self.flush_interval == 0:
+            curlen = len(self._vehicle_data_buffer)
             self.flush()
             if report:
                 logging.info(
-                    f"Wrote {len(self._vehicle_data_buffer)} "
+                    f"Wrote {curlen} "
                     f"to DB {self.db_path}, "
                     f"trip {self._last_flushed_vehicle_trip_id}, "
                     f"link {self._last_flushed_link_id}"

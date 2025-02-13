@@ -26,7 +26,7 @@ from itertools import chain
 from math import atan2, degrees, dist
 from kammat.defaults.constants import LOGGER_FORMAT
 from kammat.output.utils import defaultdict2dict
-from kammat.network.utils import hash_coordinate
+from kammat.input.network.utils import hash_coordinate, hash_inout_edges
 
 DIRS = {'FT': 3, 'TF': 2, 'N': 4}
 PT_MODES = ['pt', 'tram', 'rail', 'bus']
@@ -72,8 +72,11 @@ def set_attributes_to_ceda(
         shp['capacity'] = None
 
     shp.loc[pd.isnull(shp['capacity']), 'capacity'] = (
-        shp.loc[pd.isnull(shp['capacity']), 'speed'].apply(guess_capacity)
+        shp.loc[pd.isnull(shp['capacity'])].apply(
+            lambda r: guess_capacity(r['speed'], r['permlanes'])
         )
+    )
+
     # shp['capacity'] *= shp['permlanes']
     if 'modes' not in shp.columns:
         shp['modes'] = 'car,truck'
@@ -97,26 +100,33 @@ def assign_links_nodes_ids(
     dilanes = defaultdict(lambda: defaultdict(list))
 
     for i, n in enumerate(digraph.nodes):
-        if hash_coordinate:
+        if hash_nodes:
             digraph.nodes[n]['nodenum'] = hash_coordinate(n)
+            digraph.nodes[n]['alt_nodenum'] = hash_inout_edges([
+                str(e[-1]['ROAD_ID']) for e in
+                list(digraph.out_edges(n, data=True)) +
+                list(digraph.in_edges(n, data=True))
+            ])
         else:
             digraph.nodes[n]['nodenum'] = i
         digraph.nodes[n]['previous'] = None
         digraph.nodes[n]['in'] = []
         digraph.nodes[n]['out'] = []
 
-    # node_nodenum = nx.get_node_attributes(digraph, 'nodenum')
-
     for *e, attrs in digraph.edges(keys=True, data=True):
         u, v, k = e
         fn = digraph.nodes[u]['nodenum']
         tn = digraph.nodes[v]['nodenum']
-        lid = f'{fn}_{tn}_{attrs["ROAD_ID"]}'
         rid = attrs['ROAD_ID']
+        lid = f'{fn}_{tn}_{rid}'
+        try:
+            afn = digraph.nodes[u]['alt_nodenum']
+            atn = digraph.nodes[v]['alt_nodenum']
+            alt_lid = f'{afn}_{atn}_{rid}'
+        except KeyError:
+            alt_lid = None
 
         if lanes is not None and rid in lanes:
-            # if rid == 740039:
-            #     raise Exception
             for lane, torids in lanes[rid].items():
                 for torid, tolane in torids:
                     allowed = [tuple(e) for *e, attrs in
@@ -136,6 +146,8 @@ def assign_links_nodes_ids(
         digraph.edges[e]['node_end'] = tn
         digraph.edges[e]['custom'] = False  # !!!
         digraph.edges[e]['kind'] = None  # !!!
+        if alt_lid is not None:
+            digraph.edges[e]['alt_link_id'] = alt_lid
 
     edge_link = nx.get_edge_attributes(digraph, 'link_id')
     dilanes = defaultdict2dict(dilanes)
@@ -182,12 +194,13 @@ def reverse_geom(
 
 
 def guess_capacity(
-        speed: Union[int, float]
-        ) -> int:
+        speed: Union[int, float],
+        permlanes: int = 1
+) -> int:
     if speed <= 5:
-        return 100
+        return 100 * permlanes
     else:
-        return int(min(17.5 * speed + 60, 1800))
+        return int(min(17.5 * speed + 60, 1800)) * permlanes
 
 
 def find_successors(
@@ -423,12 +436,20 @@ def simplify_intersections(
             )[0]
             if hash_nodes:
                 next_nodenum = hash_coordinate(intersection_center)
+                next_alt_nodenum = hash_inout_edges(
+                    [e[-1]['ROAD_ID'] for e in in_edges] +
+                    [e[-1]['ROAD_ID'] for e in out_edges]
+                )
+            else:
+                next_alt_nodenum = None
             center_attributes = {
                 'nodenum': next_nodenum,
                 'previous': None,
                 'in': in_links,
                 'out': out_links
-                }
+            }
+            if next_alt_nodenum is not None:
+                center_attributes['alt_nodenum'] = next_alt_nodenum
             if newdilanes:
                 simplify_lane_definitions(newdilanes, marked_links, out_accessibility)
             newdigraph.add_node(intersection_center, **center_attributes)
@@ -603,6 +624,9 @@ def generate_attrs_string(
     s = '      <attributes>\n'
     fails = 0
     for c in towrite:
+        if c not in attrs:
+            fails += 1
+            continue
         val = attrs[c]
         if c == 'geometry':
             val = val.wkt
@@ -630,7 +654,11 @@ def write_network(
     bigstring.write('<nodes>\n')
     for (x, y), node in graph.nodes(data=True):
         num = node['nodenum']
-        bigstring.write(f'    <node id="{num}" x="{x}" y="{y}" />\n')
+        bigstring.write(f'    <node id="{num}" x="{x}" y="{y}">\n')
+        if 'alt_nodenum' in node:
+            node_attr_str = generate_attrs_string(node, ['alt_nodenum'])
+            bigstring.write(node_attr_str)
+        bigstring.write(f'    </node>\n')
     bigstring.write('</nodes>\n')
 
     bigstring.write('<links>\n')
@@ -642,7 +670,7 @@ def write_network(
 
         geoms = list(attrs['geometry'].coords)
         if from_node != geoms[0] and to_node != geoms[-1]:
-            attrs['geometry'] = LineString(geoms[::-1])        
+            attrs['geometry'] = LineString(geoms[::-1])
 
         if 'link_id' in attrs:
             bigstring.write(generate_link_string(fr, to, attrs))
@@ -661,7 +689,7 @@ def generate_link_string(
         fr: Union[str, int],
         to: Union[str, int],
         attrs: Dict[str, Any],
-        add_attrs: Tuple[str] = ('nofacility', 'geometry')
+        add_attrs: Tuple[str] = ('nofacility', 'geometry', 'alt_link_id')
 ):
     l_len = attrs["METER"]
     l_id = attrs["link_id"]

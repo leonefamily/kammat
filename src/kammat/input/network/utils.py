@@ -6,7 +6,7 @@ Created on Tue Feb 11 15:03:01 2025.
 """
 import hashlib
 import string
-from typing import Tuple
+from typing import List, Tuple, Sequence, Union, Any
 
 ALPHABET = string.digits + string.ascii_letters
 
@@ -72,6 +72,12 @@ def coordinate_to_string(
     return f"{lat:.6f},{lon:.6f}"
 
 
+def list_to_string(
+        lst: List[Any]
+) -> str:
+    return ','.join(sorted(str(el) for el in set(lst)))
+
+
 def hash_coordinate(
         coord: Tuple[float, float],
         hash_len: int = 8
@@ -82,7 +88,7 @@ def hash_coordinate(
     1. Converting the coordinate to a canonical string.
     2. Hashing the string with SHA-256.
     3. Converting the binary hash to an integer.
-    4. Reducing that integer modulo 62^6.
+    4. Reducing that integer modulo 62^n.
     5. Converting the reduced integer to a fixed-length Base62 string.
 
     Parameters
@@ -102,6 +108,47 @@ def hash_coordinate(
     coord_str = coordinate_to_string(coord)
 
     hash_obj = hashlib.sha256(coord_str.encode("utf-8"))
+    digest = hash_obj.digest()
+
+    hash_int = int.from_bytes(digest, byteorder="big")
+
+    mod_space = 62 ** hash_len  # 62^n possibilities.
+    reduced_int = hash_int % mod_space
+
+    hash_value = int_to_base62(reduced_int, hash_len)
+    return hash_value
+
+
+def hash_inout_edges(
+        inout_edge_ids: Sequence[Union[str, int]],
+        hash_len: int = 8
+) -> str:
+    """
+    Compute an N-character hash for the given coordinate.
+
+    1. Converting the edges list to a canonical string, will be sorted.
+    2. Hashing the string with SHA-256.
+    3. Converting the binary hash to an integer.
+    4. Reducing that integer modulo 62^n.
+    5. Converting the reduced integer to a fixed-length Base62 string.
+
+    Parameters
+    ----------
+    inout_edge_ids : Tuple[float, float]
+        Tuple of x,y float coordinates. Decimal precision is limited
+        to 6 decimal digits.
+    hash_len : int, optional
+        Desired length of the hash value string. The default is 8.
+
+    Returns
+    -------
+    str
+        Hash value of this coordinate.
+
+    """
+    edges_str = list_to_string(inout_edge_ids)
+
+    hash_obj = hashlib.sha256(edges_str.encode("utf-8"))
     digest = hash_obj.digest()
 
     hash_int = int.from_bytes(digest, byteorder="big")

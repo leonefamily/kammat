@@ -11,6 +11,7 @@ import json
 import logging
 import inspect
 import textwrap
+import traceback
 import threading
 import webbrowser
 from pathlib import Path
@@ -21,7 +22,8 @@ from kammat.model.utils import get_matsim_version, get_matsim_runnable_class
 from kammat import __version__ as version
 from kammat.model.utils import suggest_matsim_ram_limit
 from kammat.gui.utils import (
-    save_settings, restore_settings, run_subprocess, control_disabled, dump_log
+    save_settings, restore_settings, run_subprocess, control_disabled,
+    dump_log, format_large_number
 )
 from kammat.defaults.constants import (
     LOGGER_FORMAT, CACHE_SETTINGS_PATH, PathPointer
@@ -282,6 +284,12 @@ def get_full_layout(
     )
     analysis_input = [
         [sg.Checkbox('Analyze outputs', default=True, key='-ANALYZE-')],
+        [sg.Checkbox('Create events DB', default=True, key='-EVENTSDB-'),
+         sg.Slider(range=(100000, 10000000), orientation='h', key='-DBFLUSH-',
+                   resolution=100000, default_value=1000000,  expand_x=True,
+                   enable_events=True, disable_number_display=True),
+         sg.Text('Flush every', size=8),
+         sg.Text('', size=8, key='-DBFLUSHLAB-')],
         [sg.Text('Ribbon diagrams', size=15, tooltip=ribbon_tt),
          sg.Input('', key='-LINKGROUPS-', tooltip=ribbon_tt, expand_x=True)],
         [sg.Text('Links intensities', size=15),
@@ -678,6 +686,9 @@ def check_validity(
     vvs['analysis']['output_cordon_stats_path'] = an_dir / 'cordons_stats.shp'
     vvs['analysis']['volume_poly_path'] = values['-VOLPOLYPATH-'] if values['-VOLPOLYPATH-'] else None
     vvs['analysis']['output_volume_stats_path'] = an_dir / 'volume_stats.shp'
+
+    vvs['analysis']['output_road_db_path'] = an_dir / 'road.db' if values['-EVENTSDB-'] else None
+    vvs['analysis']['output_road_db_flush_interval'] = int(values['-DBFLUSH-'])
 
     # Comparison
     vvs['comparison']['launch'] = values['-COMPARE-'] if values['-ANALYZE-'] else False
@@ -1104,6 +1115,10 @@ def handle_nogui(
             msg,
             text_color='green' if 'failed' not in msg else 'firebrick1'
         )
+        if 'failed' in msg:
+            sg.cprint(
+                traceback.format_exc()
+            )
     return window
 
 
@@ -1142,6 +1157,8 @@ def main():
         "comparison": run_comparison,
         "gis": run_gis
     }
+    newnum = format_large_number(window['-DBFLUSH-'].widget.get())
+    window['-DBFLUSHLAB-'].update(newnum + ' rows')
 
     results = {}
     is_running = False
@@ -1293,6 +1310,9 @@ def main():
                     vvs=vvs,
                     operation=operation
                 )
+            if '-DBFLUSH-' in event:
+                newnum = format_large_number(values['-DBFLUSH-'])
+                window['-DBFLUSHLAB-'].update(newnum + ' rows')
         window.close()
     except Exception:
         import traceback

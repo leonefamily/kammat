@@ -5,7 +5,7 @@ Created on Wed Feb  1 17:39:36 2023
 @author: dgrishchuk
 """
 
-# https://www.taheramlaki.com/blog/articles/python-reading-large-xml-file/?fbclid=IwAR038EvIKG61VPsXm743Tevhr1ELEEhiTxyEw73nWQZI2Zz-nv8U1BavXzQ
+# https://www.taheramlaki.com/blog/articles/python-reading-large-xml-file
 
 
 import xml.sax

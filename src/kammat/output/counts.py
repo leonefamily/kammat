@@ -131,9 +131,15 @@ def get_events_counts(
 
     for i, event in enumerate(events):
         # parse time and round it to the closest timestep
-        if event['time'] > time_limit:
+        if event['time'] >= time_limit:
             break
         if event['type'] == 'vehicle enters traffic':
+            # for capturing last activity for turn data
+            # e.g. if None, no link was preceding current one
+            # therefore it is not a turn
+            vehicle_cache[event['vehicle']] = {
+                'link': None, 'type': event['type']
+            }
             if dbh is not None:
                 # maybe come up with something prettier...
                 dbh._vehicle_trip_nums[event['vehicle']] += 1
@@ -150,7 +156,6 @@ def get_events_counts(
             )
             mode = guess_mode(event['vehicle'])
             if event['type'] == 'entered link' and mode != 'pt':
-
                 if dbh is not None:
                     dbh.process_entered(
                         event=event,
@@ -166,6 +171,14 @@ def get_events_counts(
                         vehicle_cache[event['vehicle']]['link'], event['link']
                     )
                     turns[mode][timestep][connection] += 1
+            elif event['type'] == 'left link' and mode != 'pt':
+                if vehicle_cache[event['vehicle']]['type'] == 'vehicle enters traffic':
+                    counts[mode][timestep][event['link']] += 1
+                    dbh.process_entered(
+                        event=event,
+                        mode=mode,
+                        last_visited_link=None
+                    )
             vehicle_cache[event['vehicle']] = {
                 'link': event['link'], 'type': event['type']
             }

@@ -211,7 +211,10 @@ def analyze_output_basic(
         volume_poly_path: Union[str, Path] = None,
         output_volume_stats_path: Union[str, Path] = None,
         legs_path: Union[str, Path] = None,
-        output_transfers_path: Union[str, Path] = None
+        output_transfers_path: Union[str, Path] = None,
+        time_limit: Union[float, int] = 86400,
+        output_road_db_path: Union[str, Path] = None,
+        output_road_db_flush_interval: int = 10_000_000
 ):
     if output_transfers_path is not None and legs_path is None:
         raise ValueError(
@@ -219,8 +222,10 @@ def analyze_output_basic(
         )
     net, nodes = load_network(net_path, crs, include_nodes=True)
     counts, pt_counts, turns = get_events_counts(
-        events_path
-        )
+        events_path=events_path,
+        output_road_db_path=output_road_db_path,
+        db_flush_interval=output_road_db_flush_interval
+    )
     if counts:
         road_net = merge_net_counts(net, counts)
         road_net.to_file(output_net_counts_path)
@@ -305,6 +310,9 @@ def parse_args(
     parser.add_argument('-cs', '--output-cordon-stats-path')
     parser.add_argument('-V', '--volume-poly-path')
     parser.add_argument('-vs', '--output-volume-stats-path')
+    parser.add_argument('-L', '--time-limit')
+    parser.add_argument('-d', '--output-road-db-path')
+    parser.add_argument('-D', '--output-road-db-flush-interval', type=int)
     args = parser.parse_args(args_list)
     return args
 
@@ -364,5 +372,8 @@ if __name__ == '__main__':
         volume_poly_path=args.volume_poly_path,
         output_volume_stats_path=args.output_volume_stats_path,
         legs_path=args.legs_path,
-        output_transfers_path=args.output_transfers_path
+        output_transfers_path=args.output_transfers_path,
+        time_limit=args.time_limit,
+        output_road_db_path=args.output_road_db_path,
+        output_road_db_flush_interval=args.output_road_db_flush_interval
     )

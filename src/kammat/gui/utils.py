@@ -223,3 +223,17 @@ def handle_time_change(
                     window[end_time_el].update(900)
     window[start_time_hms_el].update(sec2str(window[start_time_el].widget.get()))
     window[end_time_hms_el].update(sec2str(window[end_time_el].widget.get()))
+
+
+def format_large_number(
+        n: Union[int, float]
+) -> str:
+    suffixes = ['', 'k', 'm', 'b', 't']
+    i = 0
+    while n >= 1000 and i < len(suffixes) - 1:
+        n /= 1000.0
+        i += 1
+    out = '{}{}'.format(
+        int(n) if n.is_integer() else '{:.1f}'.format(n), suffixes[i]
+    )
+    return out
