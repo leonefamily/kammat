@@ -1,0 +1,86 @@
+<?xml version="1.0" ?>
+<!DOCTYPE config SYSTEM "http://www.matsim.org/files/dtd/config_v2.dtd">
+<config>
+    <module name="dvrp">
+		<parameterset type="travelTimeMatrix">
+			<param name="cellSize" value="200"/>
+			<param name="maxNeighborDistance" value="10000"/>
+		</parameterset>
+	</module>
+
+	<module name="multiModeDrt">
+		<parameterset type="drt">
+			<param name="rejectRequestIfMaxWaitOrTravelTimeViolated" value="false"/>
+			<parameterset type="ExtensiveInsertionSearch"/>
+			<param name="stopDuration" value="10"/>
+			<param name="maxWaitTime" value="600"/>
+			<param name="maxTravelTimeAlpha" value="2.0"/>
+			<param name="maxTravelTimeBeta" value="900"/>
+			<param name="vehiclesFile" value="./drt-vehicles/15-8_seater-drt-vehicles.xml"/>
+			<parameterset type="zonalSystem">
+				<param name="zonesGeneration" value="GridFromNetwork"/>
+				<param name="cellSize" value="200"/>
+			</parameterset>
+
+			<parameterset type="rebalancing">
+				<parameterset type="minCostFlowRebalancingStrategy">
+					<param name="targetAlpha" value="0.5"/>
+					<param name="targetBeta" value="0.5"/>
+				</parameterset>
+			</parameterset>
+
+			<parameterset type="drtfare">
+				<param name="basefare" value="0.1"/>
+				<!-- Daily subscription fee (fee = positive value) -->
+				<param name="dailySubscriptionFee" value="0.25"/>
+				<!-- taxi fare per meter (fee = positive value) -->
+				<param name="distanceFare_m" value="0.0"/>
+				<!-- taxi fare per hour (fee = positive value) -->
+				<param name="timeFare_h" value="0.0"/>
+			</parameterset>
+		</parameterset>
+	</module>
+</config>
+
+<!--
+	<module name="multiModeDrt">
+		<parameterset type="drt">
+			<parameterset type="ExtensiveInsertionSearch"/>
+			<param name="maxTravelTimeAlpha" value="1.5"/>
+            <param name="maxTravelTimeBeta" value="1200.0"/>
+            <param name="maxWaitTime" value="1200.0"/>
+            <param name="maxWalkDistance" value="1500.0"/>
+            <param name="rejectRequestIfMaxWaitOrTravelTimeViolated" value="false" />
+
+            <param name="operationalScheme" value="stopbased"/>
+
+            <param name="stopDuration" value="60.0"/>
+
+            <param name="transitStopFile" value="drt-stops/drt-stops.xml"/>
+			<param name="vehiclesFile" value="drt-vehicles/3-8_seater-drt-vehicles.xml"/>
+			<parameterset type="zonalSystem">
+				<param name="zonesGeneration" value="GridFromNetwork"/>
+				<param name="cellSize" value="500"/>
+			</parameterset>
+
+			<parameterset type="rebalancing">
+				<param name="interval" value="900" />
+				<param name="maxTimeBeforeIdle" value="600" />
+				<parameterset type="minCostFlowRebalancingStrategy">
+					<param name="targetAlpha" value="0.25"/>
+					<param name="targetBeta" value="0.75"/>
+				</parameterset>
+			</parameterset>
+
+			<parameterset type="drtfare">
+				<param name="basefare" value="1.0"/>
+
+				<param name="dailySubscriptionFee" value="0.0"/>
+
+				<param name="distanceFare_m" value="0.0002"/>
+
+				<param name="timeFare_h" value="3.6"/>
+			</parameterset>
+		</parameterset>
+	</module>
+ -->

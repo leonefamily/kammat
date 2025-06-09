@@ -91,11 +91,12 @@ def main(
     layout = [
         [sg.Text('', key='-INFO-', size=60,
                  font=("Courier New", sg.DEFAULT_FONT[1]))],
-        [sg.Text('Turns file', size=10),
+        [sg.Text('Turns/events', size=10),
          sg.Input(turns_path, key='-TURNSPATH-', size=50, expand_x=True),
          sg.FileBrowse(key='-TURNS-', size=6,
                        file_types=(("Turns JSON file", "*.json"),
-                                   ("Turns JSON file", "*.json.gz")))],
+                                   ("Turns JSON file", "*.json.gz"),
+                                   ("Events DB file", "*.db")))],
         [sg.Text('Network file', size=10),
          sg.Input(net_path, key='-NETPATH-', size=50, expand_x=True),
          sg.FileBrowse(key='-NET-', size=6,
@@ -183,7 +184,10 @@ def main(
                     'Loading files... Might take a while', text_color='black'
                 )
                 try:
-                    turns = read_link_turns(window['-TURNSPATH-'].get())
+                    if not window['-TURNSPATH-'].get().endswith('.db'):
+                        turns = read_link_turns(window['-TURNSPATH-'].get())
+                    else:
+                        turns = None
                     net = load_network(window['-NETPATH-'].get())
                     window['-INFO-'].update('Files loaded')
                     update_visibility(window, HIDDEN_BEFORE_LOAD, True)
@@ -200,10 +204,19 @@ def main(
                     mode = 'truck'
                 if '-TYPENODE-' in values and values['-TYPENODE-']:
                     node_id = window['-NODEID-'].get()
-                    fig, tables = get_ribbon_diagram(
-                        net, turns, node_id, mode=mode,
-                        start=values['-START-'], end=values['-END-']
-                    )
+                    if turns is None:
+                        fig, tables = get_ribbon_diagram(
+                            net, None, node_id, mode=mode,
+                            start=int(values['-START-']),
+                            end=int(values['-END-']),
+                            db_path=window['-TURNSPATH-'].get()
+                        )
+                    else:
+                        fig, tables = get_ribbon_diagram(
+                            net, turns, node_id, mode=mode,
+                            start=int(values['-START-']),
+                            end=int(values['-END-'])
+                        )
                     dpath = node_id
                 elif '-TYPELINK-' in values and values['-TYPELINK-']:
                     link_ids = values['-NODEID-'].split()

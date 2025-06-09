@@ -399,6 +399,11 @@ def get_full_layout(
          # sg.Text('⮲⮱', size=5, font='_ 25', justification='center'),
          sg.Button('Ribbon diagrams', key='-RIBDIAGS-', size=20)],
         [sg.HorizontalSeparator()],
+        [sg.Text(wrap('Decay diagrams showing where from and where to agents do go through certain links'),
+                 expand_x=True),
+         sg.Text('', size=5, font='_ 25', justification='center'),
+         sg.Button('Decay diagrams', key='-DECAYDIAGS-', size=20)],
+        [sg.HorizontalSeparator()],
         [sg.Text(wrap('Process results of model from events'),
                  expand_x=True),
          # sg.Text('⮲⮱', size=5, font='_ 25', justification='center'),
@@ -1015,6 +1020,17 @@ def run_pt_counts(
     return t
 
 
+def run_decay_diagrams(
+        window: sg.Window
+) -> threading.Thread:
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'gui/decay_diagrams.py'
+    command = prepare_command({}, script_path)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-EXTERNAL-'
+    )
+    return t
+
+
 def run_results(
         window: sg.Window
 ) -> threading.Thread:
@@ -1281,6 +1297,8 @@ def main():
                 run_vehicle_counts(window)
             if event == '-PTCOUNTS-':
                 run_pt_counts(window)
+            if event == '-DECAYDIAGS-':
+                run_decay_diagrams(window)
             if event == '-RESANAL-':
                 run_results(window)
             if '-SAVEL-' in event:

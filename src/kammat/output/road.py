@@ -28,8 +28,9 @@ from shapely.ops import substring  # , split, linemerge, nearest_points,
 from pathlib import Path
 from datetime import timedelta as td  # , datetime as dt
 from matplotlib import pyplot as plt
-from collections import defaultdict
+from collections import defaultdict, Counter
 from itertools import product
+from kammat.output.utils import DbHandler
 from typing import Union, List, Tuple, Dict, Optional, Sequence
 
 # from kammat.output.utils import get_timestep_precision
@@ -190,10 +191,10 @@ def load_network(
         nodes['geometry'] = gpd.points_from_xy(nodes['x'], nodes['y'])
         nodes = gpd.GeoDataFrame(nodes, crs=crs)
     if len(netobj.node_attrs):
-        for attr, df in netobj.link_attrs.groupby('name'):
+        for attr, df in netobj.node_attrs.groupby('name'):
             nodes = nodes.merge(
                 df.drop('name', axis=1).rename({'value': attr}, axis=1),
-                how='left', on='link_id'
+                how='left', on='node_id'
             )
     if not include_links:
         return nodes
@@ -532,7 +533,7 @@ def get_turns_by_node(
 
 def get_intersection_data(
         net: gpd.GeoDataFrame,
-        turns,
+        turns: Dict[float, Dict[str, int]],
         node_id: str,
         tolerance: float = 1.0,
         start: int = 0,
@@ -542,13 +543,102 @@ def get_intersection_data(
     pairs = get_links_pairs(net, node_id, tolerance)
     unique_link_geoms = get_unique_link_geoms(net, pairs, node_id)
     nodeturns = get_turns_by_node(
-        net, turns, pairs, node_id, start, end, mode
+        net=net,
+        turns=turns,
+        pairs=pairs,
+        node_id=node_id,
+        start=start,
+        end=end,
+        mode=mode
     )
     turns_groups, groups = get_turns_groups(nodeturns, pairs)
     turns_geoms, thicknesses = get_intersection_geometry(
         net, nodeturns, unique_link_geoms, turns_groups, groups
     )
     return nodeturns, turns_geoms, turns_groups, thicknesses
+
+
+def get_intersection_data_db(
+        net: gpd.GeoDataFrame,
+        db_path: Union[str, Path],
+        node_id: str,
+        tolerance: float = 1.0,
+        start: int = 0,
+        end: int = 86399,
+        mode: str = 'car'
+):
+    pairs = get_links_pairs(net, node_id, tolerance)
+    unique_link_geoms = get_unique_link_geoms(net, pairs, node_id)
+    nodeturns = get_turns_by_node_db(
+        net=net,
+        db_path=db_path,
+        pairs=pairs,
+        node_id=node_id,
+        start=start,
+        end=end,
+        mode=mode
+    )
+    turns_groups, groups = get_turns_groups(nodeturns, pairs)
+    turns_geoms, thicknesses = get_intersection_geometry(
+        net, nodeturns, unique_link_geoms, turns_groups, groups
+    )
+    return nodeturns, turns_geoms, turns_groups, thicknesses
+
+
+def get_turns_by_node_db(
+        net: gpd.GeoDataFrame,
+        db_path: Union[str, Path],
+        pairs: Dict[str, str],
+        node_id: str,
+        start: int = 0,
+        end: int = 86399,
+        mode: str = 'car'
+) -> Dict[str, int]:
+    dbh = DbHandler(db_path=db_path)
+    dbh.connect()
+    combs = {
+        turn for turn in product(pairs.keys(), pairs.keys())
+        if turn[0] != turn[-1] and
+        ((net['to_node'] == node_id) & (net['link_id'] == turn[0])).any() and
+        ((net['from_node'] == node_id) & (net['link_id'] == turn[-1])).any()
+    }
+    unique_orig_ids = {k[0] for k in combs}.union({v[1] for v in combs})
+    orig_links_ids_map = dict(dbh._conn.execute(
+        f"""
+        SELECT orig_link_id, link_id FROM links WHERE orig_link_id IN (
+            {','.join(f"'{v}'" for v in unique_orig_ids)}
+        );
+        """
+    ).fetchall())
+    link_ids_orig_map = {v: k for k, v in orig_links_ids_map.items()}
+
+    combs_ids = set()
+    for fr, to in combs:
+        if fr not in orig_links_ids_map or to not in orig_links_ids_map:
+            continue
+        combs_ids.add((orig_links_ids_map[fr], orig_links_ids_map[to]))
+
+    strlinkids = ' OR\n'.join(
+        [f"(prev_link_id = {p[0]} AND link_id = {p[1]})" for p in combs_ids]
+    )
+    turns_times = dbh._conn.execute(
+        f"""SELECT * FROM events
+        WHERE "time" BETWEEN {start} AND {end}
+        AND ({strlinkids});
+        """
+    ).fetchall()
+    dbh.close()
+
+    pick_trip_ids = dbh.get_mode_trip_ids(mode=mode)
+    nodeturns = Counter(
+        [row[1:3] for row in turns_times if row[0] in pick_trip_ids]
+    )
+    nodeturns = {
+        (link_ids_orig_map[k[0]], link_ids_orig_map[k[1]]): v
+        for k, v in nodeturns.items()
+    }
+    nodeturns = {k: v for k, v in nodeturns.items() if v != 0}
+    return nodeturns
 
 
 def get_nodes_by_links(
@@ -1145,15 +1235,19 @@ def get_intersection_plot_by_links(
 
 def get_ribbon_diagram(
         net: gpd.GeoDataFrame,
-        turns: Dict[float, Dict[str, int]],
+        turns: Optional[Dict[float, Dict[str, int]]],
         node_id: str,
         mode: str = 'car',
         start: int = 0,
-        end: int = 86400
+        end: int = 86400,
+        db_path: Optional[Union[str, Path]] = None
 ) -> Tuple[matplotlib.figure.Figure, Dict[str, pd.DataFrame]]:
     nodeturns, turns_geoms, turns_groups, thicknesses = (
         get_intersection_data(
             net, turns, node_id, start=start, end=end, mode=mode
+        ) if turns is not None and db_path is None else
+        get_intersection_data_db(
+            net, db_path, node_id, start=start, end=end, mode=mode
         )
     )
     rd, tables = get_intersection_plot(

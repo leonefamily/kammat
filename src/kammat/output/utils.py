@@ -168,7 +168,7 @@ class DbHandler:
         pre_db_path = Path(db_path).resolve()
         if not pre_db_path.parent.exists():
             raise ValueError(
-                '{pre_db_path} parent directory does not exist'
+                f'{pre_db_path} parent directory does not exist'
             )
         if self.db_path != pre_db_path:
             self.reset()
@@ -347,21 +347,10 @@ class DbHandler:
                     f"link {self._last_flushed_link_id}"
                 )
 
-    def get_decay_diagram(
+    def get_mode_trip_ids(
             self,
-            net: gpd.GeoDataFrame,
-            link_id: Union[str, List[str]],
-            start_time: int = 25200,
-            end_time: int = 28800,
-            mode: str = 'car'
-    ):
-        link_id_repr = (
-            ','.join(f"'{lid}'" for lid in link_id)
-            if isinstance(link_id, list)
-            else f"'{link_id}'"
-        )
-        limit_str = 'LIMIT 1' if isinstance(link_id, str) else ''
-        self.connect()
+            mode: str
+    ) -> List[int]:
         req_mode_trip_ids_col = self._conn.execute(
             f"""WITH found_mode AS (
                 SELECT mode_id
@@ -381,36 +370,82 @@ class DbHandler:
         ).fetchall()
 
         if not req_mode_trip_ids_col:
-            raise ValueError(
-                'Probably wrong link_id or mode, or insufficient time range'
-            )
+            raise ValueError(f'Probably wrong mode {mode}')
         req_mode_trip_ids = [v[0] for v in req_mode_trip_ids_col]
+        return req_mode_trip_ids
+
+    def get_decay_diagram(
+            self,
+            net: gpd.GeoDataFrame,
+            link_id: Union[str, List[str]],
+            start_time: int = 25200,
+            end_time: int = 28800,
+            mode: str = 'car'
+    ):
+        link_id_repr = (
+            'IN (' + ','.join(f"'{lid}'" for lid in link_id) + ')'
+            if isinstance(link_id, list)
+            else f"= '{link_id}'"
+        )
+        limit_str = 'LIMIT 1' if isinstance(link_id, str) else ''
+        self.connect()
+
+        data_start_time = self._conn.execute(
+            "SELECT * FROM events ORDER BY ROWID ASC LIMIT 1"
+        ).fetchone()[-1]
+
+        data_end_time = self._conn.execute(
+            "SELECT * FROM events ORDER BY ROWID DESC LIMIT 1"
+        ).fetchone()[-1]
+
+        if start_time <= data_start_time and end_time >= data_end_time:
+            time_constr = ''
+        else:
+            time_constr = (
+                f'"time" BETWEEN {int(start_time)} AND {int(end_time)} AND'
+            )
+
+        req_mode_trip_ids = self.get_mode_trip_ids(mode=mode)
 
         link_trip_ids_col = self._conn.execute(
             f"""WITH found_links AS (
                 SELECT link_id
                 FROM links
-                WHERE orig_link_id IN ({link_id_repr})
+                WHERE orig_link_id {link_id_repr}
                 {limit_str}
             ), affected_trips AS (
                 SELECT trip_id,"time"
                 FROM events
-                WHERE "time" BETWEEN {int(start_time)} AND {int(end_time)}
-                AND trip_id IN ({','.join(str(v) for v in req_mode_trip_ids)})
+                WHERE {time_constr}
+                trip_id IN ({','.join(str(v) for v in req_mode_trip_ids)})
                 AND link_id IN (SELECT link_id FROM found_links)
             )
             SELECT * FROM affected_trips;
             """
         ).fetchall()
 
-        link_trip_ids_dict = dict(link_trip_ids_col)
+        if isinstance(link_id, list):
+            keep_trip_ids = [
+                k for k, v in Counter(
+                    [row[0] for row in link_trip_ids_col]
+                ).items() if v == len(link_id)
+            ]
+            link_trip_ids_col = [
+                row for row in link_trip_ids_col if row[0] in keep_trip_ids
+            ]
+
+        link_interaction_times = defaultdict(list)
+        for trip_id, timestep in link_trip_ids_col:
+            link_interaction_times[trip_id].append(timestep)
+        link_interaction_times = dict(link_interaction_times)
+
         # not needed anymore
         del req_mode_trip_ids, link_trip_ids_col
 
         links_of_trips_col = self._conn.execute(
             f"""
             SELECT link_id,trip_id,"time" FROM events WHERE trip_id IN (
-                {','.join(str(v) for v in link_trip_ids_dict.keys())}
+                {','.join(str(v) for v in link_interaction_times.keys())}
             );
             """
         ).fetchall()
@@ -429,7 +464,11 @@ class DbHandler:
         links_of_trips_new_col = [
             (
                 orig_links_ids_map[link],
-                ('before' if time <= link_trip_ids_dict[trip] else 'after')
+                ('before' if time <= min(link_interaction_times[trip])
+                 else (
+                     'after' if time > max(link_interaction_times[trip])
+                     else 'selected')
+                 )
             )
             for link, trip, time in links_of_trips_col
         ]
@@ -437,11 +476,19 @@ class DbHandler:
         link_counts_df = pd.DataFrame(links_counts, index=[mode]).transpose()
         link_counts_df.index.rename(['link_id', 'when'], inplace=True)
         link_counts_df = link_counts_df.reset_index()
-        link_counts_df.loc[
-            link_counts_df['link_id'] == link_id, 'when'
-        ] = 'selected'
+        link_counts_df.loc[link_counts_df['when'].isna(), 'when'] = 'selected'
         net_counts = net.merge(link_counts_df, on='link_id', how='right')
         return net_counts
+
+    def get_ribbon_diagram_data(
+            self,
+            net: gpd.GeoDataFrame,
+            link_id: Union[str, List[str]],
+            start_time: int = 25200,
+            end_time: int = 28800,
+            mode: str = 'car'
+    ):
+        pass
 
 
 def get_timeline(

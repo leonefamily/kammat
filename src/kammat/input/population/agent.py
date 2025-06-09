@@ -376,7 +376,7 @@ class Agent:
                     next_act = v.acts['home']
                 else:
                     # any other picks randomly except for excluded
-                    next_act = np.random.choice([f for f in facilities.keys()
+                    next_act = np.random.choice([f for f in facilities.keys()  # !!! TODO: picks from facilities that are not in diaries, but some activities data might have been filtered
                                                  if f.lower() not in
                                                  v.exclude_foster])
                 if isup:
@@ -1188,7 +1188,7 @@ class Agent:
                 'subpopulation': self.population,
                 'category': self.category,
                 'region': self.region,
-                'area': self.region,
+                'area': self.area,
                 'district': self.district,
                 'zone': self.zone
             })

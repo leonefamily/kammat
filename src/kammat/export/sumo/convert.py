@@ -1167,35 +1167,6 @@ def main(
         use_via: bool = True,
         sidewalk_width: Union[int, float] = 1.5
 ):
-    net_path = r"output_network.xml.gz"
-    lanes_path = r"output_lanes.xml.gz"
-    legs_path = r"output_legs.csv.gz"
-
-    events_path = r"output_events.xml.gz"
-    schedule_path = r"output_transitSchedule.xml.gz"
-    transit_vehicles_path = r"output_transitVehicles.xml.gz"
-    vehicles_path = r"output_vehicles.xml.gz"
-    cut_polygon_path = r"./shapes/shapes.shp"
-    crs = 'epsg:5514'
-    ignore_link_modes_str = 'artificial'
-
-    sumo_net_save_path = './sumo/net-copy.net.xml'
-    sumo_road_vehs_save_path = './sumo/road_vehs.rou.xml'
-    sumo_pt_vehs_save_path = './sumo/pt_vehs.rou.xml'
-    sumo_additionals_save_path = './sumo/stops-copy.add.xml'
-    sumo_persons_save_path = './sumo/persons.rou.xml'
-    sumo_config_save_path = './sumo/cfg.sumocfg'
-
-    min_time = 25200
-    max_time = 28800
-    use_coords = False
-    use_nodes = True
-    use_via = True
-    sidewalk_width = 1.5
-
-    os.chdir(r"E:\Modely\UP_BT_B1_nekonvencni_Masna\result\model")
-
-    #
     if ignore_link_modes_str:
         ignore_link_modes = set(ignore_link_modes_str.split(','))
     else:

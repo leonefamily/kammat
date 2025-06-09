@@ -115,9 +115,11 @@ def get_decay_plot(
     ax.spines['top'].set_visible(False)
 
     title = 'Decay diagram'
-    if link_id is not None:
+    if isinstance(link_id, str):
         title += f' of link {link_id}'
-    ax.set_title(f'Decay diagram of link {link_id}')
+    elif isinstance(link_id, list):
+        title += f' of links between {link_id[0]} - {link_id[-1]}'
+    ax.set_title(title)
 
     subtitle = ' — '.join(
         str(td(seconds=t)) for t in [start_time, end_time] if t is not None
@@ -249,9 +251,6 @@ def main(
                 if len(lsplit) == 1:
                     links_obj = lsplit[0]  # str
                 else:
-                    raise NotImplementedError(
-                        'Multiple links are not supported yet'
-                    )
                     links_obj = lsplit
 
                 mode = [
@@ -274,7 +273,9 @@ def main(
                     count_gdf[['link_id', mode]]
                 )
                 count_link = count_df.loc[
-                    count_df['link_id'] == links_obj,
+                    (count_df['link_id'] == links_obj)
+                    if isinstance(links_obj, str) else
+                    (count_df['link_id'].isin(links_obj)),
                     mode
                 ].iloc[0]
                 showtable = pd.DataFrame([
@@ -295,7 +296,7 @@ def main(
                 )
                 window['-INFO-'].update(
                     'Got plot and table', text_color='black'
-                    )
+                )
             except Exception as e:
                 window['-INFO-'].update(f'Error: {e}', text_color='firebrick1')
                 window['-COL-'].hide_row()
@@ -325,7 +326,7 @@ def main(
             save_settings(window, APP_NAME)
             filename = sg.popup_get_file(
                 message='Save table', save_as=True,
-                default_path=f'decay_{links_obj}',
+                default_path=f'decay_{links_obj}_{start_time}-{end_time}',
                 keep_on_top=True,
                 no_window=True,
                 file_types=(
@@ -354,7 +355,7 @@ def main(
             filename = sg.popup_get_file(
                 message='Save plot', save_as=True,
                 no_window=True,
-                default_path=f'decay_{links_obj}',
+                default_path=f'decay_{links_obj}_{start_time}-{end_time}',
                 keep_on_top=True,
                 file_types=(
                     ('ESRI shapefile', '*.shp'),
