@@ -315,7 +315,7 @@ def setup_simple_diaries(
         sample: Union[int, float] = 1
 ) -> List[Agent]:
     """
-    Prepare agents of transit population, that have exavtly one origin
+    Prepare agents of transit population, that have exactly one origin
     and exactly one destination. Time is generated randomly within one hour
     given in ``h`` in `time_courses` table.
 
@@ -464,24 +464,107 @@ def handle_additional_agents(
     additional_agents_list = []
 
     if 'city_logistics' in h and v.acts['citylog'] in facilities:
-        citylog_agents = setup_city_logistics(h, facilities, sample=sample)
+        citylog_agents = setup_city_logistics(
+            h=h,
+            facilities=facilities,
+            sample=sample
+        )
         additional_agents_list.extend(citylog_agents)
-    if 'time_courses' in h and v.acts['transit'] in facilities:
-        transitcars = setup_simple_diaries(
-            h, facilities, kind='transit', mode='car', sample=sample
+
+    if 'oneway_flows' in h:
+        ow_flows = setup_oneway_flows_diaries(
+            facilities=facilities,
+            h=h,
+            sample=sample
+        )
+        additional_agents_list.extend(ow_flows)
+    else:
+        if 'time_courses' in h and v.acts['transit'] in facilities:
+            transitcars = setup_simple_diaries(
+                h=h,
+                facilities=facilities,
+                kind='transit',
+                mode='car',
+                sample=sample
+                )
+            additional_agents_list.extend(transitcars)
+        if 'time_courses' in h and v.acts['freight'] in facilities and v.acts['transit'] in facilities:
+            transittruck = setup_simple_diaries(
+                h, facilities,
+                kind='transit',
+                mode='truck',
+                pref='f_',
+                sample=sample
             )
-        additional_agents_list.extend(transitcars)
-    if 'time_courses' in h and v.acts['freight'] in facilities and v.acts['transit'] in facilities:
-        transittruck = setup_simple_diaries(
-            h, facilities, kind='transit', mode='truck', pref='f_', sample=sample
-        )
-        additional_agents_list.extend(transittruck)
-        onewaytruck = setup_simple_diaries(
-            h, facilities, kind='oneway', mode='truck', pref='f_', sample=sample
-        )
-        additional_agents_list.extend(onewaytruck)
+            additional_agents_list.extend(transittruck)
+            onewaytruck = setup_simple_diaries(
+                h=h,
+                facilities=facilities,
+                kind='oneway',
+                mode='truck',
+                pref='f_',
+                sample=sample
+            )
+            additional_agents_list.extend(onewaytruck)
 
     return additional_agents_list
+
+
+def setup_oneway_flows_diaries(
+        facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        h: Helpers,
+        sample: float = 1
+) -> List[Agent]:
+    ow_agents = []
+    total_count = 0
+    for i, row in h['oneway_flows'].iterrows():
+        pre_count = row['count'] * sample
+        if pre_count < 1:
+            keep = np.random.choice([True, False], p=[sample, 1 - sample])
+            if not keep:
+                continue
+        count = max(round(pre_count), 1)
+        total_count += count
+        mode = row['mode']
+        from_act = row['from_activity']
+        to_act = row['to_activity']
+        from_fac = facilities[from_act][
+            facilities[from_act]['facility'] == row['from_facility']
+        ].iloc[0]
+        to_fac = facilities[to_act][
+            facilities[to_act]['facility'] == row['to_facility']
+        ].iloc[0]
+        from_coord = from_fac['geometry'].x, from_fac['geometry'].y
+        to_coord = to_fac['geometry'].x, to_fac['geometry'].y
+        for num in range(count):
+            deptime = td(
+                hours=int(
+                    np.random.choice(
+                        a=h['time_courses'].hour,
+                        p=h['time_courses'][mode]
+                    )
+                ),
+                minutes=int(np.random.choice(range(60))),
+                seconds=int(np.random.choice(range(60)))
+            )
+            ow_ag = Agent(
+                activities=[from_act, to_act],
+                init_mode=mode,
+                facility=from_fac['facility'],
+                home_geom=from_coord,
+                population='transit'
+            )
+            ow_ag.endtimes.append(deptime)
+            ow_ag.starttimes.append(td(0))
+            ow_ag.modes.append(ow_ag.init_mode)
+            ow_ag.coords = [from_coord, to_coord]
+            ow_ag.modes = [ow_ag.init_mode]
+            ow_ag.facilities = [from_fac['facility'], to_fac['facility']]
+            ow_ag.calculate_trips()
+            ow_ag.info = f"{from_fac['facility']}_{to_fac['facility']}_{mode}_{num}"
+            ow_ag.prepare_xml_block(ow_ag.info)
+            ow_agents.append(ow_ag)
+    return ow_agents
 
 
 def handle_and_write_additional_agents(

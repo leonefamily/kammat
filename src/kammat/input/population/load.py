@@ -52,6 +52,7 @@ def parse_args(
     parser.add_argument('-i', '--indices-path')
     parser.add_argument('-r', '--relations-path')
     parser.add_argument('-st', '--stops-path')
+    parser.add_argument('-of', '--oneway-flows-path')
     parser.add_argument('-N', '--ncores', type=int, default=1)
     parser.add_argument('-S', '--sample', type=float, default=1.)
     parser.add_argument('-it', '--include-teleported', action='store_true')
@@ -83,6 +84,7 @@ def handle_population(
         indices_path: Union[str, Path] = None,
         relations_path: Union[str, Path] = None,
         stops_path: Union[str, Path] = None,
+        oneway_flows_path: Union[str, Path] = None,
         ncores: int = 1,
         sample: float = 1.0,
         pickle_path: Union[str, Path] = None,
@@ -93,8 +95,9 @@ def handle_population(
         clusters_path, citylog_points_path, freight_points_path,
         transit_points_path, staying_path, target_probabilities_path,
         time_courses_path, city_logistics_path, times_path,
-        modal_split_path, indices_path, relations_path, stops_path
-        )
+        modal_split_path, indices_path, relations_path, stops_path,
+        oneway_flows_path
+    )
     population = prepare_and_handle_agents(
         facilities, h, ncores, sample, **kwargs
         )

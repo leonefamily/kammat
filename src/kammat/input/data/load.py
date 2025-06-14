@@ -16,6 +16,7 @@ from kammat.input.data.facilities import (
     )
 from kammat.input.data.categories import load_categories
 from kammat.input.data.diaries import load_diaries
+from kammat.input.data.oneway_flows import load_oneway_flows
 from kammat.input.data.staying import (
     load_staying, get_staying_category_spatial_unit_combinations
     )
@@ -52,7 +53,8 @@ def load_data(
         modal_split_path: Union[str, Path] = None,
         indices_path: Union[str, Path] = None,
         relations_path: Union[str, Path] = None,
-        stops_path: Union[str, Path] = None
+        stops_path: Union[str, Path] = None,
+        oneway_flows_path: Union[str, Path] = None,
         ) -> Tuple[Dict[str, gpd.GeoDataFrame], Helpers]:
     """
     Load all possible spatial and non-spatial input data about population
@@ -223,5 +225,8 @@ def load_data(
 
     if stops_path:
         helpers['stops'] = load_stops(stops_path)
+
+    if oneway_flows_path:
+        helpers['oneway_flows'] = load_oneway_flows(oneway_flows_path, facilities)
 
     return facilities, helpers

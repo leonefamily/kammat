@@ -125,6 +125,13 @@ class TimeCourses(pd.DataFrame):
         return TimeCourses
 
 
+class OnewayFlows(pd.DataFrame):
+
+    @property
+    def _constructor(self):
+        return OnewayFlows
+
+
 class TargetProbabilities(pd.DataFrame):
     _metadata = ['precision', 'target_precision']
 

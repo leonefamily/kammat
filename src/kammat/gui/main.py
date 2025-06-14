@@ -238,6 +238,9 @@ def get_full_layout(
         [sg.Text('Transit points shape', size=15),
          sg.Input('', key='-TRANPATH-', expand_x=True),
          sg.FileBrowse(key='-TRAN-', size=6)],
+        [sg.Text('One-way flows', size=15),
+         sg.Input('', key='-OFLOWPATH-', expand_x=True),
+         sg.FileBrowse(key='-TARG-', size=6)],
         [sg.Text('Time courses path', size=15),
          sg.Input('', key='-TCOURPATH-', expand_x=True),
          sg.FileBrowse(key='-TCOUR-', size=6)]
@@ -624,11 +627,20 @@ def check_validity(
         vvs['population']['indices_path'] = values['-INDPATH-']
         vvs['population']['relations_path'] = values['-RELPATH-']
         vvs['population']['stops_path'] = values['-STOPPATH-']
+        vvs['population']['oneway_flows_path'] = values['-OFLOWPATH-']
         vvs['population']['sample'] = values['-POPFRAC-']
         vvs['population']['modal_split_save_path'] = wd_population / 'modal_split.csv'
         vvs['population']['facilities_counts_save_path'] = wd_population / 'facilities_counts.shp'
         vvs['population']['relational_matrices_save_directory'] = wd_population / 'relations'
     vvs['population']['ncores'] = int(values['-THREADS-'])
+
+    if 'oneway_flows_path' in vvs['population'] and vvs['population']['oneway_flows_path']:
+        vvs['population']['freight_points_path'] = None
+        vvs['population']['transit_points_path'] = None
+
+    if (('freight_points_path' in vvs['population'] and vvs['population']['freight_points_path'])
+        or ('transit_points_path' in vvs['population'] and vvs['population']['transit_points_path'])):
+        vvs['population']['oneway_flows_path'] = None
 
     # Configuration
     vvs['config']['net_path'] = vvs['network']['net_save_path']

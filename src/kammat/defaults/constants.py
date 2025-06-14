@@ -5,10 +5,9 @@ Created on Tue Dec 13 18:17:02 2022
 @author: dgrishchuk
 """
 
-from typing import Tuple, List, Dict, Set, Callable
-from pandas import to_timedelta
+from typing import Tuple, List, Dict, Set, Callable, Union
 from pathlib import Path
-
+import pandas as pd 
 
 def str_to_float(
         string: str
@@ -18,6 +17,17 @@ def str_to_float(
     except ValueError:
         return float(string.replace(',', '.'))
 
+
+# def str_with_nones(
+#         string: str
+# ) -> Union[str, None]:
+#     if isinstance(string, str):
+#         return string
+#     elif pd.isnull(string):
+#         return None
+#     raise ValueError(
+#         '`string` is supposed to be str, None or numpy.nan'
+#     )
 
 CSV_STYLE: Dict[str, str] = {'sep': ';', 'decimal': ','}
 # csv files separator and decimal symbol convention
@@ -80,11 +90,11 @@ STRICT_DIARIES_INGORE_CATEGORIES: Tuple[str] = ('t',)
 # %% FACILITIES
 
 FACILITIES_SCHEMA: Dict[str, Callable] = SPATIAL_LEVELS_SCHEMA | {
-    'capacity': int, 'index': int, 'info': str
-    }
+    'capacity': int, 'index': int, 'info': str, 'facility': pd.StringDtype()
+}
 
 FACILITIES_COLUMNS: Tuple[str] = (*SPATIAL_LEVELS, 'activity', 'capacity',
-                                  'index', 'info', 'geometry')
+                                  'index', 'info', 'facility', 'geometry')
 
 CLUSTERS_COLUMNS: Tuple[str] = ('activity', 'geometry')
 
@@ -130,12 +140,26 @@ DISTANCES_SCHEMA: Tuple[str] = SPATIAL_LEVELS_SCHEMA
 
 DISTANCES_INGORE_ACTIVITIES: Tuple[str] = ('home', 'citylog')
 
-
 # %% TIME COURSES
 
 TIME_COURSES_COLUMNS: Tuple[str] = ('hour',)
 
 TIME_COURSES_SCHEMA: Dict[str, Callable] = {'hour': int}
+
+# %% ONEWAY FLOWS
+
+ONEWAY_FLOWS_COLUMNS: Tuple[str] = (
+    'from_activity', 'from_facility', 'to_activity', 'to_facility', 'mode', 'count'
+)
+
+ONEWAY_FLOWS_SCHEMA: Dict[str, Callable] = {
+    'from_activity': str,
+    'from_facility': str,
+    'to_activity': str,
+    'to_facility': str,
+    'mode': str,
+    'count': int
+}
 
 # %% TIMES
 
@@ -145,10 +169,9 @@ TIMES_COLUMNS: Tuple[str] = (*SPATIAL_LEVELS, 'activity',
                              'mu_end', 'sd_end')
 
 TIMES_SCHEMA: Dict[str, Callable] = SPATIAL_LEVELS_SCHEMA | {
-    'activity': str, 'mu_lasting': to_timedelta, 'sd_lasting': to_timedelta,
-    'mu_start': to_timedelta, 'sd_start': to_timedelta, 'mu_end': to_timedelta,
-    'sd_end': to_timedelta}
-
+    'activity': str, 'mu_lasting': pd.to_timedelta, 'sd_lasting': pd.to_timedelta,
+    'mu_start': pd.to_timedelta, 'sd_start': pd.to_timedelta, 'mu_end': pd.to_timedelta,
+    'sd_end': pd.to_timedelta}
 
 # %% MODAL SPLIT
 
@@ -184,8 +207,8 @@ CITY_LOGISTICS_COLUMNS: Tuple[str] = ('service_type', 'service_start',
 
 CITY_LOGISTICS_SCHEMA: Dict[str, Callable] = {
     "service_type": str,
-    "service_start": to_timedelta,
-    "service_end": to_timedelta,
+    "service_start": pd.to_timedelta,
+    "service_end": pd.to_timedelta,
     "service_area_km": str_to_float,
     "has_base": lambda x: bool(int(x)),
     "vehs_number": int,

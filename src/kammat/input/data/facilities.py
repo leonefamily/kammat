@@ -119,7 +119,17 @@ def unpack_regular_facilities(
     for act in facilities_gdf['activity'].unique():
         act_idx = facilities_gdf['activity'] == act
         f_idx = range(len(facilities_gdf[act_idx]))
-        facilities_gdf.loc[act_idx, 'facility'] = [act + str(i) for i in f_idx]
+        if 'facility' in facilities_gdf.columns:
+            # assign IDs only where there is nothing else
+            nonempty_idx = facilities_gdf[act_idx].loc[
+                facilities_gdf[act_idx]['facility'].isna(),
+                'facility'
+            ].index
+            facilities_gdf.loc[nonempty_idx, 'facility'] = [
+                act + str(i) for i in range(len(nonempty_idx))
+            ]
+        else:
+            facilities_gdf.loc[act_idx, 'facility'] = [act + str(i) for i in f_idx]
         # set names for all facilities
         facilities[act] = facilities_gdf[act_idx]
     return facilities
@@ -549,7 +559,7 @@ def load_facilities(
         facilities_path,
         static_columns=FACILITIES_COLUMNS,
         schema=FACILITIES_SCHEMA
-        )
+    )
 
     activities = facilities_gdf['activity'].unique().tolist()
     if clusters_path is not None:
