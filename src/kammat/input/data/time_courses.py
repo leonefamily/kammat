@@ -64,8 +64,9 @@ def load_time_courses(
         logging.warning('Unexpected columns were removed '
                         f"from categories: {unexpected}")
 
-    if set(modes).difference(set(req_modes)):
-        raise RuntimeError(f"Time courses must have modes: {req_modes}")
+    if req_modes:
+        if set(modes).difference(set(req_modes)):
+            raise RuntimeError(f"Time courses must have modes: {req_modes}")
 
     normalize_probability_columnwise(table, modes)
 

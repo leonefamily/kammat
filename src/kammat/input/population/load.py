@@ -27,7 +27,7 @@ from kammat.input.population.analysis import (
 
 def parse_args(
         args_list: List[str] = sys.argv[1:]
-        ) -> argparse.Namespace:
+) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('-f', '--facilities-path')
     parser.add_argument('-c', '--categories-path')
@@ -89,34 +89,62 @@ def handle_population(
         sample: float = 1.0,
         pickle_path: Union[str, Path] = None,
         **kwargs
-        ) -> Tuple[Dict[str, gpd.GeoDataFrame], Helpers, Dict[str, List[Agent]]]:
+) -> Tuple[Dict[str, gpd.GeoDataFrame], Helpers, Dict[str, List[Agent]]]:
     facilities, h = load_data(
-        facilities_path, categories_path, diaries_path, distances_path,
-        clusters_path, citylog_points_path, freight_points_path,
-        transit_points_path, staying_path, target_probabilities_path,
-        time_courses_path, city_logistics_path, times_path,
-        modal_split_path, indices_path, relations_path, stops_path,
-        oneway_flows_path
+        facilities_path=facilities_path,
+        categories_path=categories_path,
+        diaries_path=diaries_path,
+        distances_path=distances_path,
+        clusters_path=clusters_path,
+        citylog_points_path=citylog_points_path,
+        freight_points_path=freight_points_path,
+        transit_points_path=transit_points_path,
+        staying_path=staying_path,
+        target_probabilities_path=target_probabilities_path,
+        time_courses_path=time_courses_path,
+        city_logistics_path=city_logistics_path,
+        times_path=times_path,
+        modal_split_path=modal_split_path,
+        indices_path=indices_path,
+        relations_path=relations_path,
+        stops_path=stops_path,
+        oneway_flows_path=oneway_flows_path
     )
     population = prepare_and_handle_agents(
-        facilities, h, ncores, sample, **kwargs
-        )
+        facilities=facilities,
+        h=h,
+        ncores=ncores,
+        sample=sample,
+        **kwargs
+    )
     if xml_path is not None:
         write_agents(
-            population['additional'] + population['regular'],
+            agents_list=population['additional'] + population['regular'],
             file=xml_path,
             including_start_end=True
         )
     if pickle_path is not None:
-        save_pickle(population, pickle_path)
+        save_pickle(
+            obj=population,
+            pickle_path=pickle_path
+        )
     if csv_path is not None:
         maxlen = max(len(a.facilities) for a in population['regular'])
-        csv_header(maxlen, csv_path)
-        save_csv(population['regular'], csv_path)
-    analyze_population_basic(
-        population, facilities, modal_split_save_path,
-        facilities_counts_save_path, relational_matrices_save_directory
+        csv_header(
+            maxlen=maxlen,
+            file=csv_path
         )
+        save_csv(
+            agents_list=population['regular'],
+            file=csv_path
+        )
+    analyze_population_basic(
+        agents_lists=population,
+        facilities=facilities,
+        modal_split_save_path=modal_split_save_path,
+        facilities_counts_save_directory=facilities_counts_save_path,
+        relational_matrices_save_directory=relational_matrices_save_directory
+    )
     return facilities, h, population
 
 
@@ -148,5 +176,6 @@ if __name__ == '__main__':
         ncores=args.ncores,
         sample=args.sample,
         include_teleported=args.include_teleported,
-        pickle_path=args.pickle_path
-        )
+        pickle_path=args.pickle_path,
+        oneway_flows_path=args.oneway_flows_path
+    )

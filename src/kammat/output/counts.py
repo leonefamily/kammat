@@ -121,7 +121,7 @@ def get_events_counts(
     pt_veh_departures = {}
     pt_veh_lines = {}
 
-    if output_road_db_path is not None:
+    if output_road_db_path:
         dbh = DbHandler(
             db_path=output_road_db_path,
             flush_interval=db_flush_interval
@@ -174,11 +174,12 @@ def get_events_counts(
             elif event['type'] == 'left link' and mode != 'pt':
                 if vehicle_cache[event['vehicle']]['type'] == 'vehicle enters traffic':
                     counts[mode][timestep][event['link']] += 1
-                    dbh.process_entered(
-                        event=event,
-                        mode=mode,
-                        last_visited_link=None
-                    )
+                    if dbh is not None:
+                        dbh.process_entered(
+                            event=event,
+                            mode=mode,
+                            last_visited_link=None
+                        )
             vehicle_cache[event['vehicle']] = {
                 'link': event['link'], 'type': event['type']
             }

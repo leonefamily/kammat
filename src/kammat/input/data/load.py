@@ -54,8 +54,8 @@ def load_data(
         indices_path: Union[str, Path] = None,
         relations_path: Union[str, Path] = None,
         stops_path: Union[str, Path] = None,
-        oneway_flows_path: Union[str, Path] = None,
-        ) -> Tuple[Dict[str, gpd.GeoDataFrame], Helpers]:
+        oneway_flows_path: Union[str, Path] = None
+) -> Tuple[Dict[str, gpd.GeoDataFrame], Helpers]:
     """
     Load all possible spatial and non-spatial input data about population
 
@@ -123,21 +123,30 @@ def load_data(
                                  freight_points_path,
                                  citylog_points_path)
 
-    if freight_points_path or transit_points_path:
-        if time_courses_path is None:
+    if oneway_flows_path:
+        helpers['oneway_flows'] = load_oneway_flows(oneway_flows_path, facilities)
+
+    if freight_points_path or transit_points_path or oneway_flows_path:
+        if not time_courses_path:
             raise RuntimeError(
-                'If freight or transit points used, time courses are mandatory'
-                )
+                'If freight, transit points or oneway flows are used, '
+                'time courses are mandatory'
+            )
         req_tc_modes = set()
         if transit_points_path:
             req_tc_modes.update(
-                set(facilities[v.acts['transit']]['mode'].tolist()))
+                set(facilities[v.acts['transit']]['mode'].tolist())
+            )
         if freight_points_path:
             req_tc_modes.add('truck')
+        if oneway_flows_path:
+            req_tc_modes.update(
+                set(helpers['oneway_flows']['mode'].dropna().tolist())
+            )
 
         helpers['time_courses'] = load_time_courses(
             time_courses_path, req_modes=list(req_tc_modes)
-            )
+        )
 
     activities_spatial_units = {
         a: get_spatial_units(facilities[a]) for a in facilities
@@ -225,8 +234,5 @@ def load_data(
 
     if stops_path:
         helpers['stops'] = load_stops(stops_path)
-
-    if oneway_flows_path:
-        helpers['oneway_flows'] = load_oneway_flows(oneway_flows_path, facilities)
 
     return facilities, helpers

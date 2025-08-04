@@ -9,7 +9,7 @@ from kammat.tools.gtfs.io import load_gtfs
 from kammat.tools.gtfs.create import (
     Vehicle, Trip, Route, StopsList, Stop, Shape, PLANAR, transform, StopTime,
     get_stops_timetables, get_timetables_overview, estimate_total_vehicles,
-    estimate_total_vehicles_simple
+    estimate_total_vehicles_simple, calculate_route_vehicle_stats
 )
 from typing import List, Optional, Union
 from datetime import timedelta
@@ -245,18 +245,17 @@ def main(
     output_svehs_lines_path = basepath / 'svehs_lines.csv'
     output_vehs_lines_path = basepath / 'vehs_lines.csv'
 
-    vehmodels_df, vehstats_df = estimate_total_vehicles(used_vehicles, routes)
+    vehmodels_df, vehstats_df = calculate_route_vehicle_stats(used_vehicles, routes)
     svehmodels_df, svehstats_df = estimate_total_vehicles_simple(routes)
 
-    vehmodels_df.to_csv(output_vehs_path, sep=';', decimal=',', index=False)
-    vehstats_df.to_csv(output_vehs_lines_path, sep=';', decimal=',', index=False)
-    svehmodels_df.to_csv(output_svehs_path, sep=';', decimal=',', index=False)
-    svehstats_df.to_csv(output_svehs_lines_path, sep=';', decimal=',', index=False)
-
-    trips = list(itertools.chain.from_iterable(veh.trips for veh in used_vehicles))
-    stops_timetables = get_stops_timetables(trips)
-    str_timetables = get_timetables_overview(stops_timetables, trips, used_vehicles, routes)
+    vehmodels_df.to_csv(output_vehs_path, sep=';', decimal=',', index=False, encoding='utf-8-sig')
+    vehstats_df.to_csv(output_vehs_lines_path, sep=';', decimal=',', index=False, encoding='utf-8-sig')
+    svehmodels_df.to_csv(output_svehs_path, sep=';', decimal=',', index=False, encoding='utf-8-sig')
+    svehstats_df.to_csv(output_svehs_lines_path, sep=';', decimal=',', index=False, encoding='utf-8-sig')
 
     if human_readable_feed_path:
+        trips = list(itertools.chain.from_iterable(veh.trips for veh in used_vehicles))
+        stops_timetables = get_stops_timetables(trips)
+        str_timetables = get_timetables_overview(stops_timetables, trips, used_vehicles, routes)
         with open(human_readable_feed_path, mode='w', encoding='utf-8') as f:
             f.write(str_timetables)

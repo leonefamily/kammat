@@ -152,7 +152,33 @@ VEHICLE_TYPES = {
     3: 'bus',
     800: 'trolleybus',
     5: 'cable_car'
-    }
+}
+
+VEHICLE_MODELS_CAPACITY = {
+    'TRAM20': 147,
+    'TRAM30': 187,
+    'TRAM40': 293,
+    'CABLE': 8,
+    'TRAIN80': 600,
+    'TRAIN100': 600,
+    'BUS8': 50,
+    'BUS12': 80,
+    'BUS18': 120,
+    'TBUS12': 80,
+    'TBUS18': 120,
+    'SBUS15': 80
+}
+
+DEFAULT_VEHICLE_TYPE_CAPACITY = {
+    0: 187,
+    1: 1000,
+    2: 600,
+    3: 100,
+    800: 120,
+    5: 8
+}
+
+DEFAULT_VEHICLE_CAPACITY = 100
 
 
 class Stop:
@@ -1500,6 +1526,32 @@ def get_used_vehicles_stats(
     for vehicle in vehicles:
         stats[(vehicle.type, vehicle.model)] += 1
 
+    linestats = {
+        route.route_id: defaultdict(int) for route in routes
+    }
+    for vehicle in vehicles:
+        lasttrip = None
+        for trip in vehicle.trips:
+            # if trip.route_id == '1':
+            #     raise
+            if lasttrip is not None and lasttrip.route_id == trip.route_id:
+                last_sec = lasttrip.end_departure + timedelta(seconds=1)
+                curr_start = trip.start_arrival
+                while last_sec < curr_start:
+                    linestats[trip.route_id][last_sec] += 1
+                    last_sec += timedelta(seconds=10)
+            curr_sec = trip.start_arrival
+            end_sec = trip.end_departure
+            while curr_sec <= end_sec:
+                linestats[trip.route_id][curr_sec] += 1
+                curr_sec += timedelta(seconds=10)
+            lasttrip = trip
+    rstats = {}
+    for rid, routed in linestats.items():
+        maxkey = max(routed, key=routed.get)
+        maxval = routed[maxkey]
+        rstats[rid] = maxkey, maxval
+
     routes_stats = {
         route.route_id: 0 for route in routes
         }
@@ -1507,7 +1559,10 @@ def get_used_vehicles_stats(
         routes_stats[route.route_id] += len(route.trips)
 
     if as_string:
-        str_vstats = 'Vehicles required for the timetables:\n'
+        str_vstats = 'Maximum vehicles on lines (time):\n'
+        for rid, (mtime, mveh) in rstats.items():
+            str_vstats += f'{rid} - {mveh} ({td2str(mtime)})\n'
+        str_vstats += 'Vehicles required for the timetables:\n'
         for (vtype, vmodel), val in stats.items():
             str_vstats += f'{vmodel} - {val}\n'
         str_vstats += '\nTrips performed by routes:\n'
@@ -1557,10 +1612,8 @@ def get_timetables_overview(
         routes: List[Route],
         stops_list: StopsList = None,
         entries_per_row: int = 5
-        ) -> str:
-    str_timetables = f'Overview of schedule (created {dt.now()})\n'
-    str_timetables += get_used_vehicles_stats(vehicles, routes, as_string=True)
-
+) -> str:
+    str_timetables = f'Schedule overview (created {dt.now()})\n'
     for stop, stop_times in stops_timetables.items():
         stop_timetable = '\n'
         if stops_list is not None and stop not in stops_list:
@@ -1622,9 +1675,9 @@ def estimate_total_vehicles_simple(
         vehmodels[route.vehicle_model] += qv
         routes_stats.append({
             'route': str(route.route_short_name),
-            'travel_time': str(total_time).replace('0 days ', ''),
+            'travel_time': td2str(total_time),
             'max_hourly_departures': deps,
-            'approximate_interval': str(timedelta(minutes=ivl)).replace('0 days ', ''),
+            'approximate_interval': td2str(timedelta(minutes=ivl)),
             'vehicle_type': route.vehicle_model,
             'vehicles_count': qv,
             'total_departures': len(route.trips) * 2
@@ -1682,9 +1735,9 @@ def estimate_total_vehicles(
             maxcnt = model_dict[maxtime]
             row = {
                 'route': str(rt_nm),
-                'travel_time': str(total_time).replace('0 days ', ''),
+                'travel_time': td2str(total_time),
                 'max_hourly_departures': deps,
-                'approximate_interval': str(timedelta(minutes=ivl)).replace('0 days ', ''),
+                'approximate_interval': td2str(timedelta(minutes=ivl)),
                 'vehicle_type': veh_model,
                 'vehicle_count': maxcnt,
                 'total_departures': len(route.trips) * 2
@@ -1712,6 +1765,73 @@ def add_vehhours(
     vehstats_df['total_vehhours'] = total_vehicle_hours
 
 
+def calculate_route_vehicle_stats(
+        vehicles: List[Vehicle],
+        routes: List[Route]
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    vehmodels_rows = defaultdict(int)
+    vehkm_stats = defaultdict(
+        lambda: {
+            'departures_count': 0,
+            'vehkm': 0.0,
+            'vehhours': 0.0,
+        }
+    )
+    for vehicle in vehicles:
+        vehmodels_rows[vehicle.model] += 1
+        for trip in vehicle.trips:
+            rname = trip.route.route_short_name, trip.route.direction
+            vehkm_stats[rname]['departures_count'] += 1
+            vehkm_stats[rname]['vehhours'] += (
+                trip.end_departure - trip.start_arrival
+            ).total_seconds() / 3600
+            triplen = trip.route.get_length()
+            if triplen:
+                vehkm_stats[rname]['vehkm'] += triplen / 1000               
+
+    for route in routes:
+        rname = route.route_short_name, route.direction
+        hr, deps = Counter([
+            round(int(tr.start_departure.total_seconds() / 3600))
+            for tr in route.trips
+        ]).most_common(1)[0]
+        ivl = 60 / deps
+        cap = (
+            VEHICLE_MODELS_CAPACITY[route.vehicle_model]
+            if route.vehicle_model in VEHICLE_MODELS_CAPACITY
+            else DEFAULT_VEHICLE_CAPACITY
+        )
+        vehkm_stats[rname]['passengerkm'] = (
+            vehkm_stats[rname]['vehkm'] * cap
+        )
+        vehkm_stats[rname]['passengerhours'] = (
+            vehkm_stats[rname]['vehhours'] * cap
+        )
+        vehkm_stats[rname]['route'] = str(route.route_short_name)
+        vehkm_stats[rname]['from_stop'] = route.origin_name
+        vehkm_stats[rname]['to_stop'] = route.destination_name
+        vehkm_stats[rname]['approximate_interval'] = td2str(
+            timedelta(minutes=ivl)
+        )
+        vehkm_stats[rname]['vehicle_type'] = route.vehicle_model
+        vehkm_stats[rname]['vehicle_capacity'] = cap
+
+    vehstats_df = pd.DataFrame(vehkm_stats).transpose().sort_values('route').infer_objects()
+    vehmodels_df = pd.DataFrame(
+        vehmodels_rows, index=pd.Index(['count'])
+    ).transpose().reset_index().rename({'index': 'model'}, axis=1).sort_values('model')
+    vehhours_df = vehstats_df.groupby(
+        'vehicle_type'
+        ).sum()[
+            ['vehhours', 'vehkm', 'passengerkm']
+        ].reset_index().rename(
+            {'vehicle_type': 'model'},
+        axis=1
+    )
+    vehmodels_df = vehmodels_df.merge(vehhours_df)
+    return vehmodels_df, vehstats_df
+
+
 def create_gtfs(
         lines_path: Union[str, Path],
         stops_path: Union[str, Path],
@@ -1723,7 +1843,8 @@ def create_gtfs(
         output_svehs_lines_path: Optional[Union[str, Path]] = None,
         output_vehs_lines_path: Optional[Union[str, Path]] = None,
         human_readable_feed_path: Optional[Union[str, Path]] = None,
-        remove_unused_stops: bool = False
+        remove_unused_stops: bool = False,
+        vehicle_counts_path: Optional[Union[str, Path]] = None
 ):
     lines_gdf = load_lines_shape(lines_path)
     routes_table = load_routes_info(routes_path)
@@ -1734,26 +1855,58 @@ def create_gtfs(
     vehicles = assign_vehicles(routes)
 
     if output_vehs_path or output_vehs_lines_path:
-        vehmodels_df, vehstats_df = estimate_total_vehicles(vehicles, routes)
+        vehmodels_df, vehstats_df = calculate_route_vehicle_stats(vehicles, routes)
         if output_vehs_path:
-            vehmodels_df.to_csv(output_vehs_path, sep=';', decimal=',', index=False)
+            vehmodels_df.to_csv(
+                output_vehs_path,
+                sep=';',
+                decimal=',',
+                index=False,
+                encoding='utf-8-sig'
+            )
         if output_vehs_lines_path:
-            vehstats_df.to_csv(output_vehs_lines_path, sep=';', decimal=',', index=False)
+            vehstats_df.to_csv(
+                output_vehs_lines_path,
+                sep=';',
+                decimal=',',
+                index=False,
+                encoding='utf-8-sig'
+            )
 
     if output_svehs_path or output_svehs_lines_path:
         svehmodels_df, svehstats_df = estimate_total_vehicles_simple(routes)
         if output_svehs_path:
-            svehmodels_df.to_csv(output_svehs_path, sep=';', decimal=',', index=False)
+            svehmodels_df.to_csv(
+                output_svehs_path,
+                sep=';',
+                decimal=',',
+                index=False,
+                encoding='utf-8-sig'
+            )
         if output_svehs_lines_path:
-            svehstats_df.to_csv(output_svehs_lines_path, sep=';', decimal=',', index=False)
+            svehstats_df.to_csv(
+                output_svehs_lines_path,
+                sep=';',
+                decimal=',',
+                index=False,
+                encoding='utf-8-sig'
+            )
 
     trips = list(itertools.chain.from_iterable(veh.trips for veh in vehicles))
     stops_timetables = get_stops_timetables(trips)
 
     if human_readable_feed_path:
-        str_timetables = get_timetables_overview(stops_timetables, trips, vehicles, routes)
+        str_timetables = get_timetables_overview(
+            stops_timetables, trips, vehicles, routes
+        )
         with open(human_readable_feed_path, mode='w', encoding='utf-8') as f:
             f.write(str_timetables)
+
+    if vehicle_counts_path:
+        str_vehicles = f'Vehicles overview (created {dt.now()})\n'
+        str_vehicles += get_used_vehicles_stats(vehicles, routes, as_string=True)
+        with open(vehicle_counts_path, mode='w', encoding='utf-8') as f:
+            f.write(str_vehicles)
 
     if remove_unused_stops:
         stops_used = StopsList(stops_timetables.keys())
@@ -1785,6 +1938,7 @@ def parse_args(
     parser.add_argument('-M', '--output-svehs-lines-path')
     parser.add_argument('-R', '--human-readable-feed-path')
     parser.add_argument('-u', '--remove-unused-stops', action='store_true')
+    parser.add_argument('-C', '--vehicle-counts-path')
     args = parser.parse_args(sys.argv[1:] if args_list is None else args_list)
     return args
 
@@ -1802,5 +1956,6 @@ if __name__ == '__main__':
         output_svehs_lines_path=args.output_svehs_lines_path,
         output_vehs_lines_path=args.output_vehs_lines_path,
         human_readable_feed_path=args.human_readable_feed_path,
-        remove_unused_stops=args.remove_unused_stops
+        remove_unused_stops=args.remove_unused_stops,
+        vehicle_counts_path=args.vehicle_counts_path
     )

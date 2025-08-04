@@ -67,4 +67,9 @@ def load_oneway_flows(
             f"Oneway flows depend on these missing facilities: {missing_ids}"
         )
 
+    if len(table) != len(table['modes'].dropna()):
+        raise RuntimeError(
+            f"Oneway flows can only have non-null modes in `modes` column"
+        )
+
     return OnewayFlows(table)

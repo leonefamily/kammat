@@ -4,7 +4,7 @@ requires = ["flit_core >=3.2,<4"]
 
 [project]
 name = "kammat"
-version = "0.16.9"
+version = "0.16.10"
 authors = [
     {name = "Dmitrii Grishchuk", email = "leonefamily@seznam.cz"},
     {name = "Brno City Chief Architect's Office", email = "info@kambrno.cz"}
