@@ -162,8 +162,10 @@ def reduce_capacity(
         grid: gpd.GeoDataFrame,
         new_facilities: gpd.GeoDataFrame,
         negative_change: Tuple[gpd.GeoDataFrame, Dict[str, Dict[int, int]]],
-        reduce_neighbors: bool = True
-        ) -> gpd.GeoDataFrame:
+        reduce_outside: bool = True,
+        buffer_step: Union[int, float] = 100,
+        buffer_threshold: Union[int, float] = 1000
+) -> gpd.GeoDataFrame:
     """
     Remove capacity in tiles, where reducing is assumed.
 
@@ -187,66 +189,67 @@ def reduce_capacity(
     """
     logging.info('Reducing capacities')
     reduced_facilities = new_facilities.copy()
-
     for role, role_change in negative_change.items():
-
-        act = v.acts[role]
-        remained_total = 0
-
+        if v.acts[role] not in v.capacity_affected:
+            continue
         for gid, change in role_change.items():
-
-            role_facilities = new_facilities[new_facilities['activity'] == act]
-            cond = role_facilities.within(grid.loc[gid].geometry)
-            candidates = role_facilities[cond]
-            candidates_cap = candidates['capacity'].sum()
-
-            if reduce_neighbors and (
-                    len(candidates) == 0 or candidates_cap < change
-                    ):
-                logging.info(
-                    f'Enlarging removal area with grid {gid} neighbors'
-                )
-                neighbors = grid[grid.intersects(grid.loc[gid].geometry)]
-                neighbors_geom = unary_union(neighbors.geometry.tolist())
-                cond = role_facilities.within(neighbors_geom)
-                candidates = role_facilities[cond]
-                candidates_cap = candidates['capacity'].sum()
-
-            if len(candidates) == 0:
-                logging.warning(
-                    f'Nothing to remove in grid id {gid}, activity "{act}". '
-                    f'Planned to remove {abs(change)} from the capacity. '
-                    'Skipping'
-                )
-                remained_total += abs(change)
-                continue
-            if candidates_cap < change:
-                logging.warning(
-                    f'Not enough capacity to remove in grid id {gid}, '
-                    f'activity "{role}". Planned to remove {abs(change)}, '
-                    f'but there is only {candidates_cap}. Removing all'
-                )
-                reduced_facilities.drop(candidates.index, inplace=True)
-            else:
-                reduce_change = -change
-                for idx, cap in candidates['capacity'].iteritems():
-                    reduced_facilities.loc[idx, 'capacity'] -= cap
-                    if cap < reduce_change:
-                        reduce_change -= cap
+            curr_change = -change
+            curr_geom = grid.loc[gid].geometry
+            curr_buffer = 0
+            while curr_buffer < buffer_threshold:
+                candidates = reduced_facilities[
+                    reduced_facilities.within(
+                        curr_geom.buffer(curr_buffer, join_style=2)
+                    ) & (
+                        reduced_facilities['activity'] == v.acts[role]
+                    )
+                ].copy()
+                available_cap = candidates['capacity'].sum()
+                if available_cap < curr_change:
+                    reduced_facilities.drop(candidates.index, inplace=True)
+                    curr_change -= available_cap
+                    curr_buffer += buffer_step
+                    if not reduce_outside:
+                        break
+                    else:
                         continue
+                else:
+                    reduction_factor = (
+                        available_cap - curr_change
+                    ) / available_cap
+                    candidates['capacity'] = (
+                        candidates['capacity'] * reduction_factor
+                    ).round().astype(int)
+                    reduction_diff = int(
+                        curr_change - (
+                            available_cap - candidates['capacity'].sum()
+                        )
+                    )
+                    if reduction_diff != 0:
+                        pick_probs = (
+                            candidates['capacity'] /
+                            candidates['capacity'].sum()
+                        )
+                        pick_probs = pick_probs[pick_probs != 0]
+                        for _ in range(abs(reduction_diff)):
+                            pick_id = np.random.choice(
+                                pick_probs.index, p=pick_probs.values
+                            )
+                            if reduction_diff < 0:
+                                candidates.loc[pick_id, 'capacity'] += 1
+                            else:
+                                candidates.loc[pick_id, 'capacity'] -= 1
+                    reduced_facilities.loc[
+                        candidates.index,
+                        'capacity'
+                    ] = candidates['capacity']
                     break
-                remained_total += abs(reduce_change)
-
-        # removed_total = (
-        #     new_facilities[new_facilities['activity'] == act]['capacity'].sum() - 
-        #     reduced_facilities[reduced_facilities['activity'] == act]['capacity'].sum()
-        # )
-        # had_to_remove = abs(sum(role_change.values()))
-        # # remained_total = had_to_remove - removed_total
-        # logging.info(
-        #     f'"{role}" facilities still remaining: {remained_total}, '
-        #     f'had to remove: {had_to_remove}'
-        # )
+        reduced_facilities.drop(
+            reduced_facilities[
+                (reduced_facilities['capacity'] == 0) &
+                reduced_facilities['activity'] == v.acts[role]
+            ].index
+        )
     return reduced_facilities
 
 

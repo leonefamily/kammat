@@ -305,12 +305,19 @@ class Shape:
             s.geometry_planar.distance(self.start_planar) <= TOLERANCE_M
             and s.parent_station is not None
             ] if stops_list is not None else []
+        # ensure identical order when the initial set is the same
+        self.start_stops = list(
+            sorted(self.start_stops, key=lambda s: s.stop_id)
+        )
         self.start_stop = None if not self.start_stops else self.start_stops[0]
         self.end_stops = [
             s for s in stops_list if
             s.geometry_planar.distance(self.end_planar) <= TOLERANCE_M
             and s.parent_station is not None
             ] if stops_list is not None else []
+        self.end_stops = list(
+            sorted(self.end_stops, key=lambda s: s.stop_id)
+        )
         self.end_stop = None if not self.end_stops else self.end_stops[0]
 
     def __str__(self):

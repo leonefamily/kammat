@@ -62,7 +62,7 @@ def load_time_courses(
     if unexpected:
         table.drop(unexpected, axis=1, inplace=True)
         logging.warning('Unexpected columns were removed '
-                        f"from categories: {unexpected}")
+                        f"from time courses: {unexpected}")
 
     if req_modes:
         if set(modes).difference(set(req_modes)):

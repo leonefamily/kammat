@@ -272,8 +272,6 @@ def main(
                 window['-INFO-'].update(
                     'Got plot and table', text_color='black'
                     )
-                # line_ids = window['-LINES-'].get()
-                # link_id = window['-LINKID-'].get()
             except Exception as e:
                 window['-INFO-'].update(f'Error: {e}', text_color='firebrick1')
                 window['-COL-'].hide_row()

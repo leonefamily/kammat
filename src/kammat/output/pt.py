@@ -8,6 +8,7 @@ Created on Thu Feb  2 14:06:34 2023
 import gzip
 import logging
 import lxml
+import warnings
 import matplotlib
 import numpy as np
 import pandas as pd
@@ -25,6 +26,7 @@ from kammat.output.utils import (
     get_timeline, defaultdict2dict,
     td2str, LINK_STATS_FIGURE_SIZE
 )
+from kammat.output.road import load_network
 from kammat.defaults.constants import CSV_STYLE
 
 Profiles = Dict[str, Dict[str, List[Tuple[str, List[str]]]]]
@@ -1060,65 +1062,138 @@ def map_trip_on_pt_schedule(
     pass
 
 
-def get_pt_decay_diagrams_data(
+def warn_multiple_vehs(
+        pt_schedule: _ElementTree
+):
+    seen_vehs = set()
+    for depel in pt_schedule.findall('.//departure'):
+        vehid = depel.attrib['vehicleRefId']
+        if vehid in seen_vehs:
+            warnings.warn(
+                'There are PT vehicles that serve more than one departure! '
+                'Can lead to unexpercted results when calculating PT decay '
+                'diagrams'
+            )
+            break
+        seen_vehs.add(vehid)
+
+
+def get_pt_decay_diagram(
+        pt_net: gpd.GeoDataFrame,
         pt_schedule: _ElementTree,
         pt_stops: PtStops,
-        pt_counts: PtCounts,
-        legs_df: pd.DataFrame,
-        link_ids: List[str] = None,
-        stop_ids: List[str] = None,
-        stop_ids_type: Literal['id', 'linkRefId', 'name'] = 'id',
-        lines: Optional[List[str]] = None,
-        start: int = 0,
-        end: int = 86400
-):
-    raise NotImplementedError(
-        'This function is in development'
-    )
+        pt_legs: pd.DataFrame,
+        link_ids: List[str],
+        start_time: Union[int, float] = 0,
+        end_time: Union[int, float] = 86400
+) -> gpd.GeoDataFrame:
+    """
+    Prepare PT decay diagram including transfers.
 
-    if stop_ids is not None and link_ids is not None:
-        raise ValueError(
-            'Only one of `link_ids` or `stop_ids` must be provided'
+    Parameters
+    ----------
+    pt_net : gpd.GeoDataFrame
+        The complete of only PT network.
+    pt_schedule : _ElementTree
+        PT output schedule.
+    pt_stops : PtStops
+        PT stops derived from PT schedule.
+    pt_legs : pd.DataFrame
+        Legs table with only trips that contain at least one PT leg.
+    link_ids : List[str]
+        Links to analyze. More than one links leads to merging of their data.
+    start_time : Union[int, float], optional
+        Earliest time for vehicle to cross chosen link(s). The default is 0.
+    end_time : Union[int, float], optional
+        Latest time for vehicle to cross chosen link(s). The default is 86400.
+
+    Returns
+    -------
+    gpd.GeoDataFrame
+
+    """
+    rprofiles = defaultdict(dict)
+    deps = []
+    for lineel in pt_schedule.findall('transitLine'):
+        for routeel in lineel.findall('transitRoute'):
+            rprofile = get_route_profile(routeel, pt_stops)
+            rprofile.insert(
+                0,
+                (routeel.find('routeProfile').find('stop').attrib['refId'], [])
+            )
+            rprofiles[lineel.attrib['id']][routeel.attrib['id']] = rprofile
+            segment_ns = []
+            for i, (stop_id, links) in enumerate(rprofile):
+                if any(link in link_ids for link in links):
+                    segment_ns.append(i)
+            if not segment_ns:
+                continue
+            arroffsets = [
+                pd.Timedelta(sel.attrib['arrivalOffset'])
+                for sel in routeel.find('routeProfile').findall('stop')
+            ]
+            for departureel in routeel.find('departures').findall('departure'):
+                deptime = pd.to_timedelta(departureel.attrib['departureTime'])
+                for segment_n in segment_ns:
+                    midtime = deptime + arroffsets[segment_n] + (
+                        arroffsets[segment_n + 1] - arroffsets[segment_n]
+                    ) / 2
+                    if start_time < midtime.total_seconds() < end_time:
+                        deps.append((
+                            departureel.attrib['id'],
+                            departureel.attrib['vehicleRefId'],
+                            routeel.attrib['id'],
+                            lineel.attrib['id']
+                        ))
+                        break
+
+    vehroutes = set(dep[1:3] for dep in deps)
+    vehroutes_emp = list(
+        zip(
+            pt_legs['vehicle_id'].tolist(),
+            pt_legs['transit_route'].tolist()
         )
-    if stop_ids is None and link_ids is None:
-        raise ValueError('Either `link_ids` or `stop_ids` must be provided')
-
-    lrvs, profiles = get_lines_routes_vehicles_profiles(
-        pt_schedule, pt_stops, lines=lines,
-        link_ids=link_ids, stop_ids=stop_ids
     )
+    vehroutes_crit = [
+        idx for idx, vehroute in enumerate(vehroutes_emp)
+        if vehroute in vehroutes
+    ]
 
-    vroutes = {v: set() for v in lrvs['routes']}
-    for veh, route in zip(lrvs['vehicles'], lrvs['routes']):
-        vroutes[route].add(veh)
+    sel_pt_legs = pt_legs[
+        pt_legs['trip_id'].isin(
+            pt_legs.iloc[vehroutes_crit]['trip_id']
+        ) & (pt_legs['mode'] == 'pt')
+    ]
 
-    pt_legs_df = legs_df[legs_df['mode'] == 'pt'].sort_values('dep_time')
-    for col in ['dep_time', 'trav_time', 'wait_time']:
-        pt_legs_df[col] = pd.to_timedelta(pt_legs_df[col])
+    passcounts = defaultdict(int)
+    for tid, tid_df in sel_pt_legs.groupby('trip_id'):
+        agpath = []
+        for i, row in tid_df.iterrows():
+            astop = row['access_stop_id']
+            estop = row['egress_stop_id']
+            writing = False
+            for stop, leading in rprofiles[row['transit_line']][row['transit_route']]:
+                if stop == astop:
+                    writing = True
+                elif stop == estop:
+                    agpath.extend(leading)
+                    break
+                if writing:
+                    agpath.extend(leading)
+        if any(lid in agpath for lid in link_ids):
+            for aglink in agpath:
+                passcounts[aglink] += 1
 
-    decay_data = []
-    for trip_id, trip_df in pt_legs_df.groupby('trip_id'):
-        for n, leg_row in trip_df.iterrows():
-            veh_boarding = (
-                leg_row['dep_time'] + leg_row['wait_time']
-            ).total_seconds()
-            veh_exiting = (
-                leg_row['dep_time'] + leg_row['trav_time']
-            ).total_seconds()
-            leg_route = leg_row['transit_route']
-            poss_vehs = list(vroutes[leg_route])
-            veh_arrival_diffs = defaultdict(int)
-            for poss_veh in poss_vehs:
-                veh_counts = pt_counts[poss_veh]
-                for stop_count in veh_counts:
-                    if stop_count['stop'] == leg_row['access_stop_id']:
-                        diff = stop_count['departure'] - veh_boarding
-                        if diff >= 0:
-                            veh_arrival_diffs[poss_veh] += diff
-                    if stop_count['stop'] == leg_row['egress_stop_id']:
-                        diff = veh_exiting - stop_count['arrival']
-                        if diff >= 0:
-                            veh_arrival_diffs[poss_veh] += diff
+    passcounts_df = pd.Series(
+        passcounts, name='count'
+    ).to_frame().reset_index().rename(
+        {'index': 'link_id'},
+        axis=1
+    )
+    passcounts_df['when'] = 'None'  # TODO
+
+    passnet = pt_net.merge(passcounts_df, how='inner')
+    return passnet
 
 
 def get_pt_transfers(

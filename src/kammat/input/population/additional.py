@@ -526,42 +526,155 @@ def setup_oneway_flows_diaries(
         count = max(round(pre_count), 1)
         total_count += count
         mode = row['mode']
+
         from_act = row['from_activity']
+        from_fac = row['from_facility']
         to_act = row['to_activity']
-        from_fac = facilities[from_act][
-            facilities[from_act]['facility'] == row['from_facility']
-        ].iloc[0]
-        to_fac = facilities[to_act][
-            facilities[to_act]['facility'] == row['to_facility']
-        ].iloc[0]
-        from_coord = from_fac['geometry'].x, from_fac['geometry'].y
-        to_coord = to_fac['geometry'].x, to_fac['geometry'].y
-        for num in range(count):
-            deptime = td(
-                hours=int(
-                    np.random.choice(
-                        a=h['time_courses'].hour,
-                        p=h['time_courses'][mode]
-                    )
-                ),
-                minutes=int(np.random.choice(range(60))),
-                seconds=int(np.random.choice(range(60)))
+        to_fac = row['to_facility']
+        from_slevel = row['from_spatial_level']
+        from_spunit = row['from_spatial_unit']
+        to_slevel = row['to_spatial_level']
+        to_spunit = row['to_spatial_unit']
+        if pd.isnull(from_act):
+            if pd.isnull(from_spunit):
+                available_from_facilities = {
+                    act: facs[facs[from_slevel] == from_spunit]
+                    for act, facs in facilities.items()
+                }
+                available_from_facilities = {
+                    act: facs for act, facs
+                    in available_from_facilities.items()
+                    if len(facs)
+                }
+                acts_counts = {
+                    act: len(facs) for act, facs
+                    in available_from_facilities.items()
+                }
+                acts_weights = {
+                    act: val / sum(acts_counts.values())
+                    for act, val in acts_counts.items()
+                }
+            else:
+                available_from_facilities = facilities
+                acts_weights = {
+                    act: len(facs) / sum(facilities.values())
+                    for act, facs in facilities.items()
+                }
+            from_activities = np.random.choice(
+                list(acts_weights.keys()),
+                p=list(acts_weights.values()),
+                size=count,
+                replace=True
             )
+        else:
+            available_from_facilities = {from_act: facilities[from_act]}
+            from_activities = [from_act] * count
+
+        if pd.isnull(to_act):
+            if pd.isnull(to_spunit):
+                available_to_facilities = {
+                    act: facs[facs[to_slevel] == to_spunit]
+                    for act, facs in facilities.items()
+                }
+                available_to_facilities = {
+                    act: facs for act, facs
+                    in available_from_facilities.items()
+                    if len(facs)
+                }
+                acts_counts = {
+                    act: len(facs) for act, facs
+                    in available_to_facilities.items()
+                }
+                acts_weights = {
+                    act: val / sum(acts_counts.values())
+                    for act, val in acts_counts.items()
+                }
+            else:
+                available_to_facilities = facilities
+                acts_weights = {
+                    act: len(facs) / sum(facilities.values())
+                    for act, facs in facilities.items()
+                }
+            to_activities = np.random.choice(
+                list(acts_weights.keys()),
+                p=list(acts_weights.values()),
+                size=count,
+                replace=True
+            )
+        else:
+            available_to_facilities = {to_act: facilities[to_act]}
+            to_activities = [to_act] * count
+
+        if pd.isnull(from_fac):
+            from_facilities = [
+                available_from_facilities[fa].sample(1)[
+                    ['facility', 'geometry']
+                ].iloc[0].to_dict()
+                for fa in from_activities
+            ]
+        else:
+            from_facilities = [{
+                'facility': from_fac,
+                'geometry': facilities[from_act].loc[
+                    facilities[from_act]['facility'] == from_fac, 'geometry'
+                ].iloc[0]
+            }] * count
+
+        if pd.isnull(to_fac):
+            to_facilities = [
+                available_to_facilities[ta].sample(1)[
+                    ['facility', 'geometry']
+                ].iloc[0].to_dict()
+                for ta in to_activities
+            ]
+        else:
+            to_facilities = [{
+                'facility': to_fac,
+                'geometry': facilities[to_act].loc[
+                    facilities[to_act]['facility'] == to_fac, 'geometry'
+                ].iloc[0]
+            }] * count
+
+        departure_times = []
+        deptime_constr = zip(
+            np.random.choice(
+                h['time_courses']['hour'],
+                p=h['time_courses'][mode],
+                size=count
+            ).tolist(),
+            np.random.uniform(0, 3600, size=count).tolist()
+        )
+        for deph, deps in deptime_constr:
+            departure_times.append(td(hours=deph, seconds=deps))
+
+        for num in range(count):
             ow_ag = Agent(
-                activities=[from_act, to_act],
+                activities=[from_activities[num], to_activities[num]],
                 init_mode=mode,
-                facility=from_fac['facility'],
-                home_geom=from_coord,
+                facility=from_facilities[num]['facility'],
+                home_geom=(
+                    from_facilities[num]['geometry'].x,
+                    from_facilities[num]['geometry'].y
+                ),
                 population='transit'
             )
-            ow_ag.endtimes.append(deptime)
+            ow_ag.endtimes.append(departure_times[num])
             ow_ag.starttimes.append(td(0))
             ow_ag.modes.append(ow_ag.init_mode)
-            ow_ag.coords = [from_coord, to_coord]
+            ow_ag.coords = [(
+                from_facilities[num]['geometry'].x,
+                from_facilities[num]['geometry'].y
+            ), (
+                to_facilities[num]['geometry'].x,
+                to_facilities[num]['geometry'].y
+            )]
             ow_ag.modes = [ow_ag.init_mode]
-            ow_ag.facilities = [from_fac['facility'], to_fac['facility']]
+            ow_ag.facilities = [
+                from_facilities[num]['facility'],
+                to_facilities[num]['facility']
+            ]
             ow_ag.calculate_trips()
-            ow_ag.info = f"{from_fac['facility']}_{to_fac['facility']}_{mode}_{num}"
+            ow_ag.info = f"{'_'.join(ow_ag.facilities)}_{mode}_{num}"
             ow_ag.prepare_xml_block(ow_ag.info)
             ow_agents.append(ow_ag)
     return ow_agents

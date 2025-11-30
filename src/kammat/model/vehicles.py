@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Union
 
 from kammat.defaults.constants import (
-    EXAMPLE_MATSIM_VEHICLES_PATH, PathPointer
+    EXAMPLE_MATSIM_VEHICLES_PATH, PT2MATSIM_VEHICLES_CAPACITIES, PathPointer
     )
 
 ABSOLUTE_EXAMPLE_MATSIM_VEHICLES_PATH = str(
     (Path(inspect.getfile(PathPointer)).parent / EXAMPLE_MATSIM_VEHICLES_PATH).resolve()
-    )
+)
 
 
 def load_modify_and_save_vehicles(
@@ -42,11 +42,28 @@ def load_modify_and_save_vehicles(
     defvehs = lxml.etree.parse(str(default_vehicles_path)).getroot()
     newvehs = lxml.etree.parse(str(existing_vehicles_path)).getroot()
 
-    lasttypes = newvehs.findall('{http://www.matsim.org/files/dtd}vehicleType')
+    ns = {"m": "http://www.matsim.org/files/dtd"}
+    ns_type = '{http://www.matsim.org/files/dtd}vehicleType'
+    ns_cap = '{http://www.matsim.org/files/dtd}capacity'
+    lasttypes = newvehs.findall(ns_type)
     lasindex = newvehs.index(lasttypes[-1])
 
-    for i, child in enumerate(defvehs.getchildren(), start=1):
-        newvehs.insert(lasindex + i, child)
+    deftypes = defvehs.findall(ns_type)
+    for i, child in enumerate(deftypes, start=1):
+        child_type = child.attrib['id']
+        already_has = newvehs.xpath(
+            f".//m:vehicleType[@id='{child_type}']",
+            namespaces=ns
+        )
+        if not already_has:
+            newvehs.insert(lasindex + i, child)
+
+    for child in newvehs.findall(ns_type):
+        vtype = child.attrib['id']
+        if vtype in PT2MATSIM_VEHICLES_CAPACITIES:
+            cap = child.find(ns_cap)
+            cap.attrib['seats'] = str(PT2MATSIM_VEHICLES_CAPACITIES[vtype])
+            cap.attrib['standingRoomInPersons'] = '0'
 
     with open(output_vehicles_path, mode='wb') as ov:
         ov.write(

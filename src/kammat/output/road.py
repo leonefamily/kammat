@@ -1035,6 +1035,7 @@ def get_intersection_plot(
             solid_capstyle='butt',
             label=' -> '.join(turn)
             )
+        # TODO: implement color by from_group
         colors[turn] = line.get_color()
         ccolors.append([
             matplotlib.colors.to_rgb(line.get_color()) + (0.9,)

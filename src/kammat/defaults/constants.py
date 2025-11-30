@@ -46,7 +46,7 @@ MODAL_SPLIT_MODES: Set[str] = {'car', 'pt', 'walk', 'carpool', 'bike'}
 TRANSIT_MODES: Tuple[str] = ('car', 'pt', 'truck')
 # transit supported modes
 
-TIME_COURSES_MODES: Tuple[str] = ('car', 'truck')
+TIME_COURSES_MODES: Tuple[str] = ('car', 'truck', 'pt')
 # modes that are available in transit private plans
 
 PRIVATE_MODES: Tuple[str] = ('car')
@@ -149,12 +149,18 @@ TIME_COURSES_SCHEMA: Dict[str, Callable] = {'hour': int}
 # %% ONEWAY FLOWS
 
 ONEWAY_FLOWS_COLUMNS: Tuple[str] = (
-    'from_activity', 'from_facility', 'to_activity', 'to_facility', 'mode', 'count'
+    'from_activity', 'from_facility', 'from_spatial_level', 'from_spatial_unit',
+    'to_activity', 'to_facility', 'to_spatial_level', 'to_spatial_unit',
+    'mode', 'count'
 )
 
 ONEWAY_FLOWS_SCHEMA: Dict[str, Callable] = {
     'from_activity': str,
     'from_facility': str,
+    'from_spatial_level': str,
+    'from_spatial_unit': str,
+    'to_spatial_level': str,
+    'to_spatial_unit': str,
     'to_activity': str,
     'to_facility': str,
     'mode': str,
@@ -253,6 +259,15 @@ PT2MATSIM_NETWORK_NAME: str = 'network.xml'
 PT2MATSIM_SCHEDULE_NAME: str = 'schedule.xml'
 
 PT2MATSIM_VEHICLES_NAME: str = 'vehicles.xml'
+
+PT2MATSIM_VEHICLES_CAPACITIES: Dict[str, int] = {
+    'Tram': 270,
+    'Trolleybus Service': 100,
+    'Bus': 100,
+    'Rail': 500,
+    'Subway': 1000,
+    'Cable car': 8
+}
 
 PT2MATSIM_EXECUTABLE_PATH: str = '../bin/pt2matsim-22.3-shaded.jar'
 # relative to THIS file path

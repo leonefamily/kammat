@@ -20,6 +20,10 @@ import traceback
 from datetime import timedelta as td
 from kammat.output.road import load_network
 from kammat.output.utils import DbHandler, LINK_STATS_FIGURE_SIZE
+from kammat.output.pt import (
+    load_pt_schedule, get_transit_stops, warn_multiple_vehs,
+    get_pt_decay_diagram
+)
 
 from kammat.gui.utils import (
     save_settings, restore_settings, update_visibility, put_plot_to_image,
@@ -118,7 +122,7 @@ def get_decay_plot(
     if isinstance(link_id, str):
         title += f' of link {link_id}'
     elif isinstance(link_id, list):
-        title += f' of links between {link_id[0]} - {link_id[-1]}'
+        title += f' of links {link_id[0]} - {link_id[-1]}'
     ax.set_title(title)
 
     subtitle = ' — '.join(
@@ -177,13 +181,25 @@ def main(
          sg.FileBrowse(key='-NET-', size=6,
                        file_types=(("MATSim network file", "*.xml.gz"),
                                    ("MATSim network file", "*.xml")))],
+        [sg.Text('Legs file', size=10),
+         sg.Input(db_path if db_path else '',
+                  key='-LEGSPATH-', size=50, expand_x=True),
+         sg.FileBrowse(key='-LEGS-', size=6,
+                       file_types=(("Comma separated values", "*.csv"),
+                                   ("GZ archive", "*.csv.gz")))],
+        [sg.Text('PT schedule', size=10),
+         sg.Input(db_path if db_path else '',
+                  key='-SCHEDPATH-', size=50, expand_x=True),
+         sg.FileBrowse(key='-SCHED-', size=6,
+                       file_types=(("Comma separated values", "*.xml"),
+                                   ("GZ archive", "*.xml.gz")))],
         [sg.Text('', expand_x=True), sg.Button('Load', key='-LOAD-', size=6)],
         [sg.Text('Link ID(s)', key='-LINKIDTEXT-', size=10, visible=False),
          sg.Input('', key='-LINKID-', visible=False, expand_x=True)],
         [sg.Text('Mode', key='-MODETEXT-', size=10, visible=False),
          sg.Checkbox('car', key='-MODECAR-', visible=False),
          sg.Checkbox('truck', key='-MODETRUCK-', visible=False),
-         sg.Checkbox('pt', key='-MODEPT-', visible=False, disabled=True)],
+         sg.Checkbox('pt', key='-MODEPT-', visible=False)],
          [sg.Text('Time start/end', size=10, visible=False, key='-TMHINT-'),
           sg.Slider(range=(0, 86400), default_value=0, resolution=60,
                     key='-START-', orientation='h', enable_events=True,
@@ -218,26 +234,54 @@ def main(
             update_visibility(window, HIDDEN_BEFORE_PLOT, False)
             update_visibility(window, HIDDEN_BEFORE_LOAD, False)
             save_settings(window, APP_NAME)
-            if not all([window['-NETPATH-'].get(),
-                        window['-DBPATH-'].get()]):
-                window['-INFO-'].update(
-                    'Fill all fields', text_color='firebrick1'
-                )
-            else:
-                window['-INFO-'].update(
-                    'Loading files... Might take a while', text_color='black'
-                )
-                try:
+            # if not all([window['-NETPATH-'].get(),
+            #             window['-DBPATH-'].get()]):
+            #     window['-INFO-'].update(
+            #         'Fill all fields', text_color='firebrick1'
+            #     )
+            # else:
+            window['-INFO-'].update(
+                'Loading files... Might take a while', text_color='black'
+            )
+            try:
+                net = load_network(window['-NETPATH-'].get())
+                if window['-DBPATH-'].get():
                     dbh = DbHandler(db_path=values['-DBPATH-'])
-                    net = load_network(window['-NETPATH-'].get())
-                    window['-INFO-'].update('Files loaded')
-                    update_visibility(window, HIDDEN_BEFORE_LOAD, True)
-                    save_settings(window, APP_NAME)
-                except Exception as e:
-                    window['-INFO-'].update(
-                        f'Error: {e}', text_color='firebrick1'
+                else:
+                    dbh = None
+                if window['-SCHEDPATH-'].get():
+                    pt_schedule = load_pt_schedule(
+                        window['-SCHEDPATH-'].get()
                     )
-                    print(traceback.format_exc())
+                    warn_multiple_vehs(pt_schedule=pt_schedule)
+                    pt_stops = get_transit_stops(
+                        pt_schedule,
+                        include_geometries=True
+                    )
+                else:
+                    pt_schedule = None
+                    pt_stops = None
+                if window['-LEGSPATH-'].get():
+                    legs = pd.read_table(
+                        window['-LEGSPATH-'].get(),
+                        sep=';',
+                        decimal=','
+                    )
+                    pt_legs = legs[
+                        legs['trip_id'].isin(
+                            legs.loc[legs['mode'] == 'pt', 'trip_id'].unique()
+                        )
+                    ].reset_index(drop=True)
+                else:
+                    pt_legs = None
+                window['-INFO-'].update('Files loaded')
+                update_visibility(window, HIDDEN_BEFORE_LOAD, True)
+                save_settings(window, APP_NAME)
+            except Exception as e:
+                window['-INFO-'].update(
+                    f'Error: {e}', text_color='firebrick1'
+                )
+                print(traceback.format_exc())
         elif event == '-FIND-':
             save_settings(window, APP_NAME)
             try:
@@ -262,29 +306,41 @@ def main(
                 start_time = int(values['-START-'])
                 end_time = int(values['-END-'])
 
-                count_gdf = dbh.get_decay_diagram(
-                    net=net,
-                    link_id=link_id,
-                    start_time=start_time,
-                    end_time=end_time,
-                    mode=mode
-                )
+                if mode == 'pt':
+                    count_gdf = get_pt_decay_diagram(
+                        pt_net=net,
+                        pt_legs=pt_legs,
+                        pt_stops=pt_stops,
+                        pt_schedule=pt_schedule,
+                        link_ids=shlex.split(link_id),
+                        start_time=start_time,
+                        end_time=end_time
+                    )
+                else:
+                    count_gdf = dbh.get_decay_diagram(
+                        net=net,
+                        link_id=link_id,
+                        start_time=start_time,
+                        end_time=end_time,
+                        mode=mode
+                    )
                 count_df = pd.DataFrame(
-                    count_gdf[['link_id', mode]]
+                    count_gdf[['link_id', mode if mode != 'pt' else 'count']]
                 )
                 count_link = count_df.loc[
                     (count_df['link_id'] == links_obj)
                     if isinstance(links_obj, str) else
                     (count_df['link_id'].isin(links_obj)),
-                    mode
+                    mode if mode != 'pt' else 'count'
                 ].iloc[0]
                 showtable = pd.DataFrame([
-                    f'Vehicles through link/profile by mode {mode}: {count_link}'
+                    f'{"Vehicles" if mode != "pt" else "Passengers"} '
+                    f"through link/profile by mode {mode}: {count_link}"
                 ])
                 fig = get_decay_plot(
                     count_gdf=count_gdf,
                     link_id=links_obj,
-                    mode=mode
+                    mode=mode if mode != 'pt' else 'count'
                 )
                 window['-COL-'].unhide_row()
                 update_visibility(window, HIDDEN_BEFORE_PLOT, True)

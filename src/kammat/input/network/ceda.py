@@ -55,12 +55,10 @@ def read_and_filter_ceda(
     logging.info(f'Reading and processing {shp_path}')
     shp = gpd.read_file(shp_path).dropna(subset=['geometry'])
 
-    dup_ids = shp.duplicated(subset='ROAD_ID')['ROAD_ID'].unique().tolist()
-    if len(dup_ids):
+    if len(shp['ROAD_ID'].unique()) != len(shp):
         raise RuntimeError(
-            f'There are duplicated ROAD_ID values '
-            f'in the subset that can cause problems: '
-            f'{dup_ids}'
+            'There are duplicated ROAD_ID values '
+            'in the subset that can cause problems'
         )
     shp['METER'] = shp.length
     # 3 - oneway along, 2 - oneway opposite, 4 - no way, 1 - both

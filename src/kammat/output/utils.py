@@ -290,6 +290,13 @@ class DbHandler:
             )
         )
 
+    def process_pt_event(
+            event: Dict[str, Union[str, int, float]],
+    ):  # TODO
+        raise NotImplementedError(
+            'PT processing to be done'
+        )
+
     def process_entered(
             self,
             event: Dict[str, Union[str, int, float]],
@@ -304,6 +311,9 @@ class DbHandler:
             self._vehicle_ids[veh] = self._next_vehicle_id
             self._next_vehicle_id += 1
         vid = self._vehicle_ids[veh]
+
+        if mode == 'pt':
+            self.process_pt_event(event=event)
 
         if last_visited_link is not None:
             if last_visited_link not in self._link_ids:

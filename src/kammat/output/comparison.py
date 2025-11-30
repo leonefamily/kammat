@@ -6,6 +6,7 @@ Created on Tue Mar  7 17:28:48 2023
 """
 import argparse
 import logging
+import shapely
 import sys
 
 import geopandas as gpd
@@ -278,13 +279,67 @@ def handle_spatial_comparison(
         diff_net_save_path: Union[str, Path] = None,
         merge_bidir_roads: bool = False
         ) -> Optional[gpd.GeoDataFrame]:
-    prev_net = gpd.read_file(prev_net_path)
-    net = gpd.read_file(curr_net_path)
+    prev_net = gpd.read_file(prev_net_path).sort_values(
+        comparison_columns,
+        ascending=False
+    )
+    net = gpd.read_file(curr_net_path).sort_values(
+        comparison_columns,
+        ascending=False
+    )
+    # assume crs are planar (in meters)
     crss = [crs for crs in (net.crs, prev_net.crs) if crs is not None]
     crs = crss[0].srs if crss else None
-    diff_net = net.merge(
-        prev_net, suffixes=('_1', '_0'), on='geometry', how='outer'
+
+    # for pt mode consistency...
+    net.geometry = shapely.set_precision(net.geometry, grid_size=0.2)
+    prev_net.geometry = shapely.set_precision(prev_net.geometry, grid_size=0.2)
+
+    if isinstance(comparison_columns, str):
+        sorter0 = comparison_columns + '_0'
+        sorter1 = comparison_columns + '_1'
+    else:
+        sorter0 = [c + '_0' for c in comparison_columns]
+        sorter1 = [c + '_1' for c in comparison_columns]
+
+    ident_geom = net.reset_index().merge(
+        prev_net.reset_index(),
+        on='geometry',
+        how='inner',
+        suffixes=('_1', '_0')
+    ).sort_values(sorter1, ascending=False)
+
+    if len(ident_geom) > len(ident_geom['index_1'].unique()):
+
+        matched1 = []
+        matched0 = []
+        for i, idgrows in ident_geom.groupby('index_1', sort=False):
+            idgrows = idgrows[~idgrows['index_0'].isin(matched0)].sort_values(
+                sorter0, ascending=False
+            )
+            if len(idgrows) > 0:
+                matched1.append(idgrows['index_1'].iloc[0])
+                matched0.append(idgrows['index_0'].iloc[0])
+        ident_geom = ident_geom[
+            ident_geom[['index_1', 'index_0']].apply(tuple, axis=1).isin(
+                list(zip(matched1, matched0))
+            )
+        ]
+
+    prev_unmatched = prev_net[
+        ~prev_net.index.isin(ident_geom['index_0'].unique())
+    ].rename(
+        {c: f'{c}_0' for c in prev_net.columns if c != 'geometry'},
+        axis=1
     )
+    curr_unmatched = net[
+        ~net.index.isin(ident_geom['index_1'].unique())
+    ].rename(
+        {c: f'{c}_1' for c in net.columns if c != 'geometry'},
+        axis=1
+    )
+    diff_net = pd.concat([curr_unmatched, ident_geom, prev_unmatched])
+
     if isinstance(comparison_columns, (list, tuple)):
         for col in comparison_columns:
             diff_net[col + '_1'] = diff_net[col + '_1'].fillna(0)
@@ -299,7 +354,7 @@ def handle_spatial_comparison(
         diff_net[col + '_ad'] = diff_net[col + '_1'] - diff_net[col + '_0']
         diff_net[col + '_rd'] = diff_net[col + '_ad'] / diff_net[col + '_0']
     else:
-        raise NotImplementedError('{type(comparison_columns)} is unsupported')
+        raise NotImplementedError(f'{type(comparison_columns)} is unsupported')
     diff_net = gpd.GeoDataFrame(diff_net, crs=crs)
     if diff_net_save_path is None:
         return diff_net

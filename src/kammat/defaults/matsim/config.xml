@@ -918,6 +918,18 @@
 				<param name="mode" value="bike" />
 				<param name="monetaryDistanceRate" value="0.0" />
 			</parameterset>
+			<parameterset type="activityParams" >
+				<param name="activityType" value="hsr" />  <!-- high speed rail -->
+				<param name="closingTime" value="undefined" />
+				<param name="earliestEndTime" value="undefined" />
+				<param name="latestStartTime" value="undefined" />
+				<param name="minimalDuration" value="00:01:00" />
+				<param name="openingTime" value="undefined" />
+				<param name="priority" value="1.0" />
+				<param name="scoringThisActivityAtAll" value="false" />
+				<param name="typicalDuration" value="00:05:00" />
+				<param name="typicalDurationScoreComputation" value="relative" />
+			</parameterset>
 		</parameterset>
 	</module>
 	<module name="plans" >

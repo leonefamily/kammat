@@ -156,7 +156,7 @@ def filter_busiest_day(
 
     # create new calendar
     cal_row = {c: '0' for c in gtfs['calendar'].columns}
-    cal_row[DAYS[day.dayofweek]] = '1'
+    cal_row[DAYS[day.weekday()]] = '1'
     cal_row['service_id'] = busiest_service_id
     cal_row['start_date'] = day
     cal_row['end_date'] = day
@@ -241,6 +241,49 @@ def get_busiest_service_ids_day(
             servday[ald].append(service_id)
 
     mk = max(mostday, key=mostday.get)
+    return servday[mk], mk
+
+
+def get_day_service_ids(
+        gtfs: Dict[str, pd.DataFrame],
+        day: str  # isoformat
+) -> Tuple[List[str], dt]:
+    mostday = defaultdict(int)
+    servday = defaultdict(list)
+
+    for service_id, service_df in gtfs['trips'].groupby('service_id'):
+
+        cal_df = gtfs['calendar'][gtfs['calendar']['service_id'] == service_id]
+        sd, ed = cal_df[['start_date', 'end_date']].iloc[0]
+        allowed_wdays = cal_df[DAYS].iloc[0].to_dict()
+        drange = pd.date_range(sd, ed)
+        allowed_days = []
+
+        for awd in drange:
+            d_name = awd.day_name().lower()
+
+            if 'calendar_dates' in gtfs:
+                cdates = gtfs['calendar_dates'][
+                     (gtfs['calendar_dates']['date'].dt.date == awd.date()) &
+                     (gtfs['calendar_dates']['service_id'] == service_id)
+                ]
+                exctypes = cdates['exception_type'].tolist()
+                excluded = '1' in exctypes
+                included = '2' in exctypes
+            else:
+                excluded = False
+                included = False
+
+            if allowed_wdays[d_name] and not excluded:
+                allowed_days.append(awd)
+            elif included:
+                allowed_days.append(awd)
+
+        for ald in allowed_days:
+            mostday[ald] += len(service_df)
+            servday[ald].append(service_id)
+
+    mk = dt.fromisoformat(day)
     return servday[mk], mk
 
 
