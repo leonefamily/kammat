@@ -145,7 +145,8 @@ class Variables:
             'walk': 'wal',
             'cycling': 'cyc',
             'leisure': 'lei',
-            'personal': 'per'
+            'personal': 'per',
+            'high_speed_rail': 'hsr'
         }
 
         self.speeds: Dict[str, float] = {
@@ -247,7 +248,8 @@ class Variables:
                                            self.acts['visit'],
                                            self.acts['walk'],
                                            self.acts['cycling'],
-                                           self.acts['journey'])
+                                           self.acts['journey'],
+                                           self.acts['high_speed_rail'])
         # activities not to be picked randomly, if foster facility is needed
 
         self.special_acts: Tuple[str] = (self.acts['freight'],

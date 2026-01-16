@@ -181,6 +181,7 @@ class Agent:
         self.starttimes = []
         self.activities = activities
         self.spatial_references = []
+        self.capacity_used = []
         self.facilities = []
         self.coords = []
         self.init_mode = init_mode
@@ -202,7 +203,7 @@ class Agent:
         return (
             f'Agent(category={self.category}, activities={self.activities}, '
             f'region={self.region}, area={self.area}, district={self.district}'
-            f', zone={self.zone}, start={start}, end={end}'
+            f', zone={self.zone}, start={start}, end={end})'
             )
 
     def __repr__(self):
@@ -211,7 +212,7 @@ class Agent:
         return (
             f'Agent(category={self.category}, activities={self.activities}, '
             f'region={self.region}, area={self.area}, district={self.district}'
-            f', zone={self.zone}, start={start}, end={end}'
+            f', zone={self.zone}, start={start}, end={end})'
             )
 
     def copy(self):
@@ -305,7 +306,9 @@ class Agent:
 
         """
         (coords, gendists, dists, fclts,
-         modes, pt_stop_walks, spat_refs) = [[] for _ in range(7)]
+         modes, pt_stop_walks, spat_refs,
+         capacity_used
+         ) = [[] for _ in range(8)]
 
         visited_dict = {v.acts['home']: {
             'facility': self.home_facility,
@@ -351,6 +354,7 @@ class Agent:
 
                 pt_stop_walks.append(stopwalk1)
                 spat_refs.append(act_dict['spatial_ref'])
+                capacity_used.append(next_act != v.acts['home'])
                 continue
             elif i == 0:
                 # generally triggers, when the first activity is not home
@@ -459,6 +463,7 @@ class Agent:
             coords.append(coord)
             pt_stop_walks.append(stopwalk1)
             spat_refs.append(next_spat_ref)
+            capacity_used.append(reduce)
 
             if not islast:
                 mode = self.pick_mode_spatially(
@@ -484,6 +489,7 @@ class Agent:
         self.modes = self._fix_private_modes(modes)
         self.pt_stop_walks = intify(pt_stop_walks[1:] if remove_first else pt_stop_walks)
         self.spatial_references = spat_refs[1:] if remove_first else spat_refs
+        self.capacity_used = capacity_used[1:] if remove_first else capacity_used
 
     def pick_facilities(
             self,
@@ -2704,7 +2710,7 @@ def handle_and_write_regular_agents(
         abandon_pt: bool = False,
         use_links: bool = False,
         include_teleported: bool = False,
-        action_on_lacking_capacity: Literal['error', 'warn', 'increase'] = 'error',
+        action_on_lacking_capacity: Literal['error', 'warn', 'increase'] = 'warn',
         reserved_ratio: float = 0.1
         ) -> List[Agent]:
     """

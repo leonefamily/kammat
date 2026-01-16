@@ -190,8 +190,8 @@ def reduce_capacity(
     logging.info('Reducing capacities')
     reduced_facilities = new_facilities.copy()
     for role, role_change in negative_change.items():
-        if v.acts[role] not in v.capacity_affected:
-            continue
+        # if v.acts[role] not in v.capacity_affected:
+        #     continue
         for gid, change in role_change.items():
             curr_change = -change
             curr_geom = grid.loc[gid].geometry
@@ -214,31 +214,20 @@ def reduce_capacity(
                     else:
                         continue
                 else:
-                    reduction_factor = (
-                        available_cap - curr_change
-                    ) / available_cap
-                    candidates['capacity'] = (
-                        candidates['capacity'] * reduction_factor
-                    ).round().astype(int)
-                    reduction_diff = int(
-                        curr_change - (
-                            available_cap - candidates['capacity'].sum()
-                        )
-                    )
-                    if reduction_diff != 0:
+                    for _ in range(abs(int(curr_change))):
                         pick_probs = (
                             candidates['capacity'] /
                             candidates['capacity'].sum()
                         )
-                        pick_probs = pick_probs[pick_probs != 0]
-                        for _ in range(abs(reduction_diff)):
-                            pick_id = np.random.choice(
-                                pick_probs.index, p=pick_probs.values
-                            )
-                            if reduction_diff < 0:
-                                candidates.loc[pick_id, 'capacity'] += 1
-                            else:
-                                candidates.loc[pick_id, 'capacity'] -= 1
+                        pick_id = np.random.choice(
+                            pick_probs.index, p=pick_probs.values
+                        )
+                        if curr_change < 0:
+                            candidates.loc[pick_id, 'capacity'] += 1
+                        else:
+                            candidates.loc[pick_id, 'capacity'] -= 1
+                    # if reduced_facilities.loc[candidates.index, 'capacity'].sum() - candidates['capacity'].sum() != curr_change:
+                    #     raise
                     reduced_facilities.loc[
                         candidates.index,
                         'capacity'
@@ -246,7 +235,7 @@ def reduce_capacity(
                     break
         reduced_facilities.drop(
             reduced_facilities[
-                (reduced_facilities['capacity'] == 0) &
+                (reduced_facilities['capacity'] <= 0) &
                 reduced_facilities['activity'] == v.acts[role]
             ].index
         )

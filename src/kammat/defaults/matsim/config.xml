@@ -165,7 +165,7 @@
 			<param name="subpopulation" value="null" />
 			<param name="utilityOfLineSwitch" value="-0.1" />
 			<param name="waiting" value="-0.0" />
-			<param name="waitingPt" value="-0.2" />
+			<param name="waitingPt" value="-0.0" />
 			<parameterset type="activityParams" >
 				<param name="activityType" value="hom" />
 				<param name="closingTime" value="undefined" />

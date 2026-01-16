@@ -1083,9 +1083,11 @@ def get_pt_decay_diagram(
         pt_schedule: _ElementTree,
         pt_stops: PtStops,
         pt_legs: pd.DataFrame,
-        link_ids: List[str],
+        link_stops_ids: List[str],
+        by: Literal['link_id', 'stop_id', 'stop_name'] = 'link_id',
         start_time: Union[int, float] = 0,
-        end_time: Union[int, float] = 86400
+        end_time: Union[int, float] = 86400,
+        return_used_legs: bool = False
 ) -> gpd.GeoDataFrame:
     """
     Prepare PT decay diagram including transfers.
@@ -1112,6 +1114,35 @@ def get_pt_decay_diagram(
     gpd.GeoDataFrame
 
     """
+    if by == 'stop_id':
+        if not all(sid in pt_stops for sid in link_stops_ids):
+            raise ValueError(
+                'Some of the requested stop IDs '
+                'are not in the provided schedules'
+            )
+        new_link_stops_ids = []
+    elif by == 'stop_name':
+        new_link_stops_ids = []
+        for sname in link_stops_ids:
+            name_stop_ids = []
+            for sid, sdata in pt_stops.items():
+                if 'name' in sdata and sdata['name'] == sname:
+                    name_stop_ids.append(sid)
+            if not name_stop_ids:
+                raise ValueError(
+                    f'Stop with name {sname} is not found in the provided '
+                    'schedules'
+                )
+            new_link_stops_ids.extend(name_stop_ids)
+        link_stops_ids = new_link_stops_ids.copy()
+        new_link_stops_ids = []
+    elif by == 'link_id':
+        pass
+    else:
+        raise ValueError(
+            f'Provided `by` is not recognized: {by}'
+        )
+
     rprofiles = defaultdict(dict)
     deps = []
     for lineel in pt_schedule.findall('transitLine'):
@@ -1124,8 +1155,13 @@ def get_pt_decay_diagram(
             rprofiles[lineel.attrib['id']][routeel.attrib['id']] = rprofile
             segment_ns = []
             for i, (stop_id, links) in enumerate(rprofile):
-                if any(link in link_ids for link in links):
-                    segment_ns.append(i)
+                if by == 'link_id':
+                    if any(link in link_stops_ids for link in links):
+                        segment_ns.append(i)
+                elif by in ('stop_id', 'stop_name'):
+                    if stop_id in link_stops_ids and i + 1 < len(rprofile):
+                        segment_ns.append(i)
+                        new_link_stops_ids.extend(rprofile[i + 1][1])
             if not segment_ns:
                 continue
             arroffsets = [
@@ -1166,24 +1202,32 @@ def get_pt_decay_diagram(
     ]
 
     passcounts = defaultdict(int)
+    used_trips = []
     for tid, tid_df in sel_pt_legs.groupby('trip_id'):
         agpath = []
         for i, row in tid_df.iterrows():
             astop = row['access_stop_id']
             estop = row['egress_stop_id']
             writing = False
-            for stop, leading in rprofiles[row['transit_line']][row['transit_route']]:
-                if stop == astop:
+            rprofile = rprofiles[row['transit_line']][row['transit_route']]
+            for j, (stop, leading) in enumerate(rprofile):
+                if j != 0 and rprofile[j - 1][0] == astop:
                     writing = True
-                elif stop == estop:
+                if stop == estop:
                     agpath.extend(leading)
                     break
                 if writing:
                     agpath.extend(leading)
-        if any(lid in agpath for lid in link_ids):
-            for aglink in agpath:
-                passcounts[aglink] += 1
-
+        if by == 'link_id':
+            if any(lid in agpath for lid in link_stops_ids):
+                for aglink in agpath:
+                    passcounts[aglink] += 1
+                used_trips.append(tid)
+        elif by in ('stop_id', 'stop_name'):
+            if any(lid in agpath for lid in new_link_stops_ids):
+                for aglink in agpath:
+                    passcounts[aglink] += 1
+                used_trips.append(tid)
     passcounts_df = pd.Series(
         passcounts, name='count'
     ).to_frame().reset_index().rename(
@@ -1192,8 +1236,14 @@ def get_pt_decay_diagram(
     )
     passcounts_df['when'] = 'None'  # TODO
 
-    passnet = pt_net.merge(passcounts_df, how='inner')
-    return passnet
+    passnet = add_stop_name_columns(
+        pt_net=pt_net.merge(passcounts_df, how='inner'),
+        pt_stops=pt_stops
+    )
+    if not return_used_legs:
+        return passnet
+    used_legs = pt_legs[pt_legs['trip_id'].isin(used_trips)]
+    return passnet, used_legs
 
 
 def get_pt_transfers(
