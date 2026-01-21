@@ -10,22 +10,24 @@ import geopandas as gpd
 from shapely.geometry import Point
 import matplotlib.pyplot as plt
 import numpy as np
-from datetime import timedelta
+from datetime import timedelta, datetime
 from io import StringIO
 import logging
 import random
+import traceback
 from pathlib import Path
 from copy import deepcopy
+import itertools
 from typing import Union, Tuple, List, Dict, Literal, Optional, Any
 
 from kammat.input.data.types import Helpers
 from kammat.defaults.variables import Variables
 from kammat.defaults.constants import (
     SPATIAL_LEVELS_LIST, PRIVATE_MODES, MODAL_SPLIT_MODES
-    )
+)
 from kammat.input.population.utils import (
-    proj_distance, proj_distance_df, td_to_str, intify
-    )
+    proj_distance, proj_distance_df, td_to_str, intify, best_intersection
+)
 from kammat.defaults.constants import CACHE_SETTINGS_PATH
 
 CACHE_FOLDER: Path = Path(CACHE_SETTINGS_PATH) / 'population'
@@ -354,7 +356,7 @@ class Agent:
 
                 pt_stop_walks.append(stopwalk1)
                 spat_refs.append(act_dict['spatial_ref'])
-                capacity_used.append(next_act != v.acts['home'])
+                capacity_used.append(False)
                 continue
             elif i == 0:
                 # generally triggers, when the first activity is not home
@@ -365,6 +367,7 @@ class Agent:
                 fclts.append(visited_dict[curr_act]['facility'])
                 coords.append(visited_dict[curr_act]['coord'])
                 spat_refs.append(visited_dict[curr_act]['spatial_ref'])
+                capacity_used.append(False)
             # -----------------------------------------------------------------
 
             reduce = must_reduce(next_act)
@@ -404,42 +407,68 @@ class Agent:
             else:  # all other simulated activities
                 gen_dist, next_spat_ref_prob = generate_dist_spatially(
                     h, curr_act, next_act, spat_refs[-1]
-                    )
-                # get not only distance, but spatial reference based on stats
+                )
+                # get not only distance, but spatial reference based on stats.
                 # it's proven, that distance distribution might have two peaks
                 # depending on where does a person departs from or where to
 
                 next_act_l = next_act.lower()
 
-                filtered = include_indices(
-                    facilities, h, next_act_l, next_spat_ref_prob
+                if next_act_l in v.capacity_affected:
+                    filtered = facilities[next_act_l][
+                        facilities[next_act_l]['capacity'] > 0
+                    ]
+                else:
+                    filtered = facilities[next_act_l]
+
+                filtered_idx = include_indices(
+                    filtered, h, next_act_l
                 )
                 # filter by indices probabilities where applicable
 
-                filtered = include_relations(
-                    filtered, h, next_act_l,
-                    spat_refs[-1]  # or visited_dict[v.acts['home']]['spatial_ref']
-                    )
+                filtered_tar = include_target_probability(
+                    filtered, h, next_act_l
+                )
+                # filter by target probability if present
+
+                filtered_rel = include_relations(
+                    filtered, h, next_act_l, spat_refs[-1]
+                    # or visited_dict[v.acts['home']]['spatial_ref']
+                )
                 # if relations are available, reduce possibilities
 
                 if next_act_l in v.cluster_affected:
                     # prefer places that lie in predefined clusters
-                    filtered = get_places_cluster(
-                        filtered, facilities, next_act_l, gen_dist, coords[-1]
+                    filtered_cls = get_places_cluster(
+                        filtered, facilities,
+                        next_act_l, gen_dist, coords[-1]
                     )
+                else:
+                    filtered_cls = filtered
 
                 if spat_refs[-1][h['target_probabilities'].precision] != next_spat_ref_prob:
-                    # or spat_refs[PRECISIONS['target_probabilities']][-1] == 'suburb' and next_spat_ref == 'city':
-                    # alter_suburb_dist
+                    # or spat_refs[PRECISIONS['target_probabilities']][-1] ==
+                    # 'suburb' and next_spat_ref == 'city':
+                    #     alter_suburb_dist
 
                     # creates new distance based on reachability
                     new_gen_dist = alter_any_dist(
-                        coords[-1], gen_dist, filtered,
+                        coords[-1], gen_dist, facilities[next_act_l],
                         outer_offset=v.cluster_dist_thresh,
                         alter_thresh=v.reach_percentage
                     )
                 else:
                     new_gen_dist = gen_dist
+
+                idx_idx = set(filtered_idx.index.tolist())
+                rel_idx = set(filtered_rel.index.tolist())
+                cls_idx = set(filtered_cls.index.tolist())
+                tar_idx = set(filtered_tar.index.tolist())
+
+                isect = list(
+                    best_intersection([idx_idx, rel_idx, cls_idx, tar_idx])
+                )
+                filtered = facilities[next_act_l].loc[isect]
 
                 fclt, coord, next_spat_ref = get_min_diff(
                     facilities, next_act_l, new_gen_dist,
@@ -497,8 +526,8 @@ class Agent:
             h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
             ):
         """
-        Pick facilities for agent's diary, not taking spatial aspect into
-        account.
+        Pick facilities for agent's diary, regardless of spatial aspect.
+
         # !!! DEPRECATED, use ``self.pick_dists_facilities_spatially()``
 
         Parameters
@@ -1618,7 +1647,6 @@ def get_places_cluster(
         DataFrame with points, that fulfill clustering conditions
 
     """
-
     cldists = proj_distance_df(filtered, prev)
     clthresh = cldists[(cldists < (gen_dist + outer_offset)) &
                        (cldists >= (gen_dist - inner_offset))]
@@ -2348,15 +2376,13 @@ def must_reduce(
 
 
 def include_indices(
-        facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        filtered: Union[gpd.GeoDataFrame, pd.DataFrame],
         h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
-        act_l: str,
-        prec_val: str = None,
-        ignore_index: bool = False
-        ) -> Union[gpd.GeoDataFrame, pd.DataFrame]:
+        act_l: str
+) -> Union[gpd.GeoDataFrame, pd.DataFrame]:
     """
     Try to select facilities by indices, if any are available for the specified
-    activity and if requested. Respects spatial aspect, if needed.
+    activity and if requested.
 
     Parameters
     ----------
@@ -2368,12 +2394,6 @@ def include_indices(
         Table `indices`
     act_l : str
         **Lower case** (!) code of activity
-    prec_val : str, optional
-        If None, doesn't consider spatial precision level. If passed,
-        must be a string code of PRECISION[`target_probabilities`] level.
-        The default is None.
-    ignore_index : bool, optional
-        Indexing is omitted if ``prec_val`` is not None. The default is False.
 
     Raises
     ------
@@ -2386,12 +2406,8 @@ def include_indices(
         Table of specified activity's facilities with applied filters
 
     """
-    if prec_val is not None:
-        filtered = facilities[act_l][facilities[act_l][h['target_probabilities'].target_precision] == prec_val]
-        if ignore_index:
-            return filtered
-    else:
-        filtered = facilities[act_l]
+    if 'indices' not in h:
+        return filtered
     indices = h['indices'][h['indices'].activity == act_l].copy()
     if len(indices) > 0:
         avail_idx = set(filtered['index'].unique())
@@ -2404,6 +2420,36 @@ def include_indices(
         if len(filtered) == 0:
             raise RuntimeError(
                 f'No {act_l} facilities with index {ind}, act {act_l}')
+    return filtered
+
+
+def include_target_probability(
+        filtered: Union[gpd.GeoDataFrame, pd.DataFrame],
+        h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        prec_val: str = None
+) -> Union[gpd.GeoDataFrame, pd.DataFrame]:
+    """
+    Filter by target probability given the value.
+
+    Parameters
+    ----------
+    filtered : Union[gpd.GeoDataFrame, pd.DataFrame]
+        Some activity's facilities.
+    h : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
+        DESCRIPTION.
+    prec_val : str, optional
+        DESCRIPTION. The default is None.
+
+    Returns
+    -------
+    filtered : TYPE
+        DESCRIPTION.
+
+    """
+    if 'target_probabilities' in h and prec_val is not None:
+        filtered = filtered[
+            filtered[h['target_probabilities'].target_precision] == prec_val
+        ]
     return filtered
 
 
@@ -2440,10 +2486,8 @@ def include_relations(
     """
     # after indices and spatial filtering
     if 'relations' in h:
-
         if act_l not in set(h['relations']['activity']):
             return filtered
-
         relations = h['relations'][h['relations']['activity'] == act_l]
         avail_spat_units = filtered[relations.target_precision].unique()
         targ = relations.target_precision + '_target'
@@ -2469,7 +2513,10 @@ def get_min_diff(
         closer_to_home: bool = False,
         home_coord: Tuple[float] = None,
         prev_act: str = None,
-        next_act: str = None
+        next_act: str = None,
+        capacity_refiller: List[int] = None,
+        refilled_times: int = 0,
+        refill_limit: int = 4
         ) -> Union[Tuple[str, Tuple[float, float], Dict[str, str]],
                    Tuple[str, Tuple[float, float]]]:
     """
@@ -2503,6 +2550,11 @@ def get_min_diff(
         Code of previous act. Is checked whether it *IS NOT* home.
     next_act : str, optional
         Code of the next act. Is checked, whether it *IS* home.
+    capacity_refiller : List[int], optional
+    
+    refilled_times : int, optional
+    
+    refill_limit : int, optional
 
     Raises
     ------
@@ -2516,14 +2568,32 @@ def get_min_diff(
         Tuple of 2 or 3 elements
 
     """
+    refilled = False
+
     if closer_to_home and home_coord is None:
         raise RuntimeError(
             'When closer_to_home is True, home_coord must be provided'
             )
+    # !!! Probably reenable later, or move to other place
+    # if act in v.capacity_affected:
+    #     facility_df = facility_df[facility_df['capacity'] > 0]
 
     if xycoords is None:
         pick = facility_df.index
     else:
+
+        # if capacity_refiller is not None:  # !!! incremental assignment
+        #     if act == v.acts['work']:
+        #         if facility_df['capacity'].sum() == 0:
+        #                 if refilled_times >= refill_limit:
+        #                     raise RuntimeError(
+        #                         f'Cannot refill capacities of activity `{act}`. '
+        #                         f'Refill limit of {refill_limit} reached, '
+        #                         f'but capacities are still insufficient'
+        #                     )
+        #                 facilities[act]['capacity'] = capacity_refiller
+        #                 refilled = True
+
         dists = proj_distance_df(facility_df, xycoords)
         diffs = (dists - gen_dist)  # .abs() ?
         diffs_weighted = diffs
@@ -2599,10 +2669,15 @@ def reduce_capacity(
 
     """
     cap = facilities[act].at[fid, 'capacity'].item()
-    if cap > 1:
+    if cap >= 1:
         facilities[act].at[fid, 'capacity'] -= 1
     else:
-        facilities[act].drop(fid, inplace=True)
+        raise RuntimeError(
+            'Trying to reduce capacity from facility with 0 remaining. '
+            f'Activity {act}, ID {facilities[act].loc[fid]}'
+        )
+    # else:  # !!! incremental assignment
+    #     facilities[act].drop(fid, inplace=True)
 
 
 def report_progress(
@@ -2739,7 +2814,7 @@ def handle_and_write_regular_agents(
             `error`: raise RuntimeError;
             `warn`: just show a warning, but keep processing;
             `increase`: try to estimate needed capacities.
-        The default is 'error'.
+        The default is 'warn'.
     reserved_ratio : float, optional
         Ratio to keep reserved (in range from 0 to 1). The default is 0.1.
 
@@ -2760,25 +2835,54 @@ def handle_and_write_regular_agents(
     check_capacity_sufficiency(
         agents_list, facilities, action_on_lacking_capacity, reserved_ratio
         )
-    random.shuffle(agents_list)
 
+    # orig_work_capacities = facilities['wor'].set_index('facilities')['capacity']
+
+    random.shuffle(agents_list)
+    proctimes = []
     for i, agent in enumerate(agents_list):
-        agent.info = f'{process}_{i}'
-        agent.process(
-            facilities, h,
-            use_links=use_links, prefer_private=prefer_private,
-            abandon_pt=abandon_pt, include_teleported=include_teleported,
-        )
+        t1 = datetime.now()
+        try:
+            agent.info = f'{process}_{i}'
+            agent.process(
+                facilities, h,
+                use_links=use_links, prefer_private=prefer_private,
+                abandon_pt=abandon_pt, include_teleported=include_teleported,
+            )
+        except Exception as e:
+            logging.error(
+                f'Process {process} failed on agent {i} with error:\n'
+                f'{"-" * 36}\n{traceback.format_exc()}'
+                f'{"-" * 36}\nBailing from process {process}' +
+                f' with {i} handled agents and'
+                f' {len(agents_list[i:])} unhandled'
+            )
+            for a in agents_list[i:]:
+                a.info = 'failed'
+            if report_every != 0:
+                report_progress(
+                    progress=round(i * 100 / len(agents_list), 2)
+                )
+            return agents_list
 
         if announce_every != 0 and i % announce_every == 0 and i > 0:
+            eta = (
+                len(agents_list[i:]) *
+                sum(proctimes[-announce_every:], timedelta()) /
+                len(proctimes[-announce_every:])
+            )
             logging.info(
                 f'{i} agents, process {process}, '
-                f'progress {round(i * 100 / len(agents_list), 2)}%'
+                f'progress {round(i * 100 / len(agents_list), 2)}%, '
+                f'ETA: {td_to_str(eta)}'
             )
         if report_every != 0 and i % report_every == 0 and i > 0:
             report_progress(
                 progress=round(i * 100 / len(agents_list), 2)
             )
+        t2 = datetime.now()
+        if announce_every != 0:
+            proctimes.append(t2 - t1)
 
     if report_every != 0:
         report_progress(progress=100.0)

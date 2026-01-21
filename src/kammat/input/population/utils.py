@@ -7,12 +7,113 @@ Created on Wed Jan 18 17:03:34 2023
 
 import lzma
 import pickle
+import itertools
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 from pathlib import Path
-from typing import Union, List, Tuple, Any
+from typing import Union, List, Tuple, Any, Set
 from datetime import timedelta as td, datetime as dt
+
+
+def best_intersection(
+        sets: List[Set[Any]]
+) -> Set[Any]:
+    """
+    Return biggest intersection of sets starting with combining all.
+
+    Tries the intersection of all sets first, then every combination that
+    omits one set, two sets, etc. until each set is on its own.
+
+    If several combinations yield intersections of the same maximal size,
+    the first one encountered is returned.
+
+    Parameters
+    ----------
+    sets : List[Set[Any]]
+        List containing sets, populated or empty.
+
+    Returns
+    -------
+    Set[Any]
+        Biggest possible intersection of all or part of sets.
+
+    """
+    if not sets:
+        return set()
+
+    best = set()
+    best_size = -1
+
+    for r in range(len(sets), 0, -1):
+        for combo in itertools.combinations(sets, r):
+            inter = combo[0].copy()
+            for s in combo[1:]:
+                inter &= s
+                if not inter:
+                    # stop iterating if no intersection already
+                    break
+            cur_size = len(inter)
+            if cur_size > best_size:
+                best, best_size = inter, cur_size
+            # skip the rest if max already found
+            if best_size == min(len(s) for s in combo):
+                continue
+        if best_size > 0:
+            break
+    return best
+
+
+def scale_to_percent(
+        arr: List[int],
+        perc: float = 0.9
+) -> List[int]:
+    """
+    Scale array so that its sum is equal `perc` fraction of the original sum.
+
+    Parameters
+    ----------
+    arr : List[int]
+        An integer array.
+    perc : float, optional
+        Fraction to calculate target sum for the output array.
+        The default is 0.9.
+
+    Returns
+    -------
+    List[int]
+        List of integers, even if input is mistakenly float.
+
+    """
+    original_sum = sum(arr)
+    target_sum = round(original_sum * perc)
+
+    scaled = [x * perc for x in arr]
+    ints = [int(v) for v in scaled]
+    fracs = [v - i for v, i in zip(scaled, ints)]
+
+    current_sum = sum(ints)
+    delta = target_sum - current_sum
+
+    if delta > 0:
+        # add 1 delta times if bigger than 0
+        idx = sorted(
+            range(len(fracs)),
+            key=lambda i: fracs[i],
+            reverse=True
+        )[:delta]
+        for i in idx:
+            ints[i] += 1
+    elif delta < 0:
+        # subtract if less than 0
+        idx = sorted(
+            range(len(fracs)),
+            key=lambda i: fracs[i]
+        )[:-delta]
+        for i in idx:
+            ints[i] -= 1
+
+    return ints
 
 
 def proj_distance_df(df: Union[pd.DataFrame, gpd.GeoDataFrame],

@@ -387,10 +387,12 @@ def get_facilities_counts(
         agents_list: List[Agent],
         ) -> Dict[str, Dict[str, int]]:
     """
-    Get how many times each facility was visited. 'own' facility is which
-    corresponds with agent's activity, 'not_own' has different type than
-    activity (was chosen randomly). Only facilities that have at least 1
-    visitor will be exported. Home activity is omitted.
+    Get how many times each facility was visited.
+
+    'own' facility is which corresponds with agent's activity,
+    'not_own' has different type than activity (was chosen randomly).
+    Only facilities that have at least 1 visitor will be exported.
+    Home activity is omitted.
 
     Parameters
     ----------
@@ -403,7 +405,6 @@ def get_facilities_counts(
         Keys are 'own' and 'not_own', subkeys are facilities ids
 
     """
-
     own_counts = defaultdict(int)
     not_own_counts = defaultdict(int)
     re_expr = r'^\b[a-z]{' + str(ACTIVITY_CODE_LENGTH) + '}'
@@ -425,7 +426,7 @@ def get_facilities_counts(
     return {
         'own': dict(own_counts),
         'not_own': dict(not_own_counts)
-        }
+    }
 
 
 def pickle_agents_and_facilities(

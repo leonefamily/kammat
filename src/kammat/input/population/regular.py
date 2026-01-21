@@ -19,9 +19,10 @@ from kammat.defaults.constants import (
     )
 from kammat.input.population.agent import Agent
 from kammat.defaults.variables import Variables
+from kammat.input.population.utils import scale_to_percent
 from kammat.input.data.types import (
     Categories, Staying, Diaries, ModalSplit, Helpers
-    )
+)
 
 v = Variables()
 
@@ -78,9 +79,10 @@ def set_categories(
                     logging.warn(f'Set equal probabilities in {prec} {zone}')
                     probs = [1 / len(probs) for prob in probs]
                 elif all_zero_behavior == 'mean':
-                    logging.warn(f'Set equal probabilities in {prec} {zone}')
+                    logging.warn(f'Set mean probabilities in {prec} {zone}')
                     probs = mean_probs
                 elif all_zero_behavior == 'random':
+                    logging.warn(f'Set random probabilities in {prec} {zone}')
                     rand_vals = np.random.uniform(size=len(categories))
                     probs = rand_vals / rand_vals.sum()
                 elif all_zero_behavior == 'error':
@@ -92,13 +94,15 @@ def set_categories(
                         'Wrong all_zero_behavior defined on function call'
                         )
             agents_df.loc[agents_df[prec] == zone, 'category'] = (
-                                 # categories to choose of
-                                 np.random.choice(categories,
-                                 # length of values to generate
-                                 len(agents_df.loc[agents_df[prec] == zone]),
-                                 # category probability
-                                 p=probs
-                                 ))
+                np.random.choice(
+                    # categories to choose from
+                    categories,
+                    # length of values to generate
+                    len(agents_df.loc[agents_df[prec] == zone]),
+                    # category probability
+                    p=probs
+                )
+            )
         except IndexError as e:
             raise RuntimeError(
                 f'{prec.capitalize()} {zone} is not in categories'
@@ -259,9 +263,9 @@ def assign_diaries(
 def get_agents_list_strict(
         agents_df: Union[pd.DataFrame, gpd.GeoDataFrame],
         h: Helpers
-        ) -> List[Agent]:
+) -> List[Agent]:
     """
-    Get agents list using strict diaries
+    Get agents list using strict diaries.
 
     Parameters
     ----------
@@ -295,16 +299,20 @@ def get_agents_list_strict(
 
 
 def get_basic_agents_df(
-        facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
+        facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        sample: float = 1.0
         ) -> pd.DataFrame:
     """
-    Duplicate home coordinates as many times, as they have capacity
+    Duplicate home coordinates as many times, as they have capacity.
 
     Parameters
     ----------
     facilities : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with (Geo)DataFrames, containing info about
         facilities for every available activity.
+    sample : float, optional
+        Multiply with this fraction to get reduced/increased agents number.
+        The default is 1.0.
 
     Returns
     -------
@@ -313,18 +321,22 @@ def get_basic_agents_df(
     """
     homes = facilities[v.acts['home']]
     agents_df = homes.loc[
-        homes.index.repeat(homes['capacity'])
-        ].reset_index(drop=True)[list(AGENTS_COLUMNS)]
+        homes.index.repeat(
+            scale_to_percent(homes['capacity'].tolist(), perc=sample)
+        )
+    ].reset_index(drop=True)[list(AGENTS_COLUMNS)]
     return agents_df
 
 
 def get_agents_list(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
-        h: Helpers
-        ) -> List[Agent]:
+        h: Helpers,
+        sample: float = 1.0
+) -> List[Agent]:
     """
-    Get list of agents using ordinary diaries (with probabilities of every
-                                               activity chain)
+    Get list of agents using ordinary diaries.
+
+    Ordinary diaries are ones with probabilities of every activity chain.
 
     Parameters
     ----------
@@ -335,6 +347,9 @@ def get_agents_list(
         Dictionary with helper tables, loaded from .input.data.load
         Tables 'distances' and 'target_probabilities'
         are extracted from the dictionary.
+    sample : float, optional
+        Multiply with this fraction to get reduced/increased agents number.
+        The default is 1.0.
 
     Returns
     -------
@@ -343,11 +358,14 @@ def get_agents_list(
 
     """
     logging.info('Agents processing started')
-    agents_df = get_basic_agents_df(facilities)
+    agents_df = get_basic_agents_df(facilities, sample=sample)
     set_categories(agents_df, h['categories'])
     set_modes(agents_df, h['modal_split'])
     set_diaries(agents_df, h['diaries'])
+
     agents_list = []
+    aglen = len(agents_df)
+    report_n = int(aglen / 10)
     for i, ag in agents_df.iterrows():
         if ag.activities != v.acts['home']:  # skip everyone who stays home
             coords = ag['x'], ag['y']
@@ -357,10 +375,10 @@ def get_agents_list(
                                      ag.modes, ag.facility, coords,
                                      info=ag['info']
                                      ))
-        # if i % 100000 == 0:
-        #     logging.info(
-        #         f'{i} agents processed ({round(i * 100 / len(agents_Df), 2)}%)'
-        #         )
+        if i % report_n == 0:
+            logging.info(
+                f'{i} agents generated ({round(i * 100 / aglen, 2)}%)'
+            )
     logging.info('Agents processed')
     random.shuffle(agents_list)
     return agents_list
@@ -371,9 +389,10 @@ def set_diaries(
         diaries: Diaries
         ):
     """
-    Creates `activities` column in ``agents_df`` and assigns activities
-    based on spatial units and categories in ``diaries_df``. Changes are made
-    in place
+    Create `activities` column in ``agents_df`` and assigns activities.
+
+    Activities are assigned based on spatial units and categories
+    in ``diaries_df``. Changes are made in place.
 
     Parameters
     ----------

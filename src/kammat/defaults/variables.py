@@ -166,7 +166,7 @@ class Variables:
         # capacity of these facilities is going to reduce when agents pick them
 
         self.cluster_affected: Tuple[str] = (self.acts['work'],
-                                             self.acts['elemschool'])
+                                             self.acts['buying'])
         # activities to use clusters on
 
         self.cluster_dist_thresh: float = 300

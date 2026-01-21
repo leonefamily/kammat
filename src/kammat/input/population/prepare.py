@@ -110,12 +110,15 @@ def split_agents_setup_data(
 def get_agents_list_multiproc(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         h: Helpers,
-        ncores: int = 1
-        ) -> List[Agent]:
+        ncores: int = 1,
+        sample: float = 1.0
+) -> List[Agent]:
     """
-    Get list of preprocessed agents. Multiprocessing works
-    only on non-strict diaries. Due to multiprocessing issues on Windows, this
-    function is performed in other module, than the rest of regular population
+    Get list of preprocessed agents.
+
+    Multiprocessing works only on non-strict diaries.
+    Due to multiprocessing issues on Windows, this function is performed
+    in other module, than the rest of regular population.
 
     Parameters
     ----------
@@ -127,6 +130,9 @@ def get_agents_list_multiproc(
     ncores : int, optional
         Positive integer number of cores to use during multiprocessing.
         The default is 1 - multiprocessing is off.
+    sample : float, optional
+        Multiply with this fraction to get reduced/increased agents number.
+        The default is 1.0.
 
     Returns
     -------
@@ -137,7 +143,7 @@ def get_agents_list_multiproc(
     logging.info('Assigning categories, modes and diaries to agents')
 
     if h['diaries'].type == 'strict':
-        agents_df = get_basic_agents_df(facilities)
+        agents_df = get_basic_agents_df(facilities, sample=sample)
 
         if ncores > 1:
             data = split_agents_setup_data(agents_df, h, ncores)
@@ -150,7 +156,7 @@ def get_agents_list_multiproc(
         else:
             agents_list = get_agents_list_strict(agents_df, h)
     else:
-        agents_list = get_agents_list(facilities, h)
+        agents_list = get_agents_list(facilities, h, sample=sample)
 
     return agents_list
 
@@ -238,8 +244,10 @@ def handle_regular_agents_multiproc(
         Processed regular agents
 
     """
-    agents_list = get_agents_list_multiproc(facilities, h, ncores)
-    agents_list = random.sample(agents_list, int(len(agents_list) * sample))
+    agents_list = get_agents_list_multiproc(
+        facilities, h, ncores, sample=sample
+    )
+    # agents_list = random.sample(agents_list, int(len(agents_list) * sample))
 
     if ncores > 1:
         agents_data = split_agents_data(
@@ -296,6 +304,11 @@ def prepare_and_handle_agents(
         Dictionary with keys 'regular' and 'additional'
 
     """
+    logging.basicConfig(
+        format='%(asctime)s %(levelname)s %(message)s',
+        level=logging.INFO
+    )  # trigger here to ensure output out of threads
+
     logging.info('Additional population is being processed...')
     additional_agents_list = handle_additional_agents(
         facilities, h, sample

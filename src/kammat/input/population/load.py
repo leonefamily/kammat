@@ -117,16 +117,16 @@ def handle_population(
         sample=sample,
         **kwargs
     )
+    if pickle_path is not None:
+        save_pickle(
+            obj=population,
+            pickle_path=pickle_path
+        )
     if xml_path is not None:
         write_agents(
             agents_list=population['additional'] + population['regular'],
             file=xml_path,
             including_start_end=True
-        )
-    if pickle_path is not None:
-        save_pickle(
-            obj=population,
-            pickle_path=pickle_path
         )
     if csv_path is not None:
         maxlen = max(len(a.facilities) for a in population['regular'])
@@ -137,6 +137,14 @@ def handle_population(
         save_csv(
             agents_list=population['regular'],
             file=csv_path
+        )
+    fail = len([a.info == 'failed' for a in population['regular']])
+    if fail:
+        raise RuntimeError(
+            'There has been an error during population processing, which '
+            f'resulted in {fail} agents from `regular` population '
+            'failure while handled. See logs for more details. '
+            'Population has been saved anyways'
         )
     analyze_population_basic(
         agents_lists=population,
