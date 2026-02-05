@@ -274,7 +274,8 @@ class Agent:
             facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
             h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
             reset_at_home: bool = False,
-            closer_to_home: bool = True
+            closer_to_home: bool = True,
+            refiller: Optional[Dict[str, List[List[int]]]] = None
             ):
         """
         Generates distances, picks facilities and their coords, and
@@ -305,6 +306,9 @@ class Agent:
             Set to True, if agent should try to look for activity before home,
             that is closer to it, than other available, instead of just picking
             by minimal distance difference according to ``h[distances]``
+        refiller : Dict[str, List[List[int]]], optional
+            Provide refill of capacity once it reaches zero for facilities
+            affected by capacity limits. The default is None (no refill).
 
         """
         (coords, gendists, dists, fclts,
@@ -377,15 +381,17 @@ class Agent:
 
             # --------------- Handle "not-own" activities block ---------------
 
-            if next_act.lower() in v.cuckoo_acts:  # acts without own facilities
+            if next_act.lower() in v.cuckoo_acts:  # act without own facilities
                 if next_act.lower() == v.acts['visit']:
                     # visits can only be in homes layer
                     next_act = v.acts['home']
                 else:
                     # any other picks randomly except for excluded
-                    next_act = np.random.choice([f for f in facilities.keys()  # !!! TODO: picks from facilities that are not in diaries, but some activities data might have been filtered
+                    next_act = np.random.choice([f for f in facilities.keys()
                                                  if f.lower() not in
                                                  v.exclude_foster])
+                    # !!! TODO: picks from facilities that are not in diaries,
+                    # but some activities data might have been filtered ^
                 if isup:
                     next_act = next_act.upper()
                 reduce = False  # never reduce capacity, if "not-own"
@@ -405,9 +411,18 @@ class Agent:
                 new_gen_dist = 0
 
             else:  # all other simulated activities
-                gen_dist, next_spat_ref_prob = generate_dist_spatially(
-                    h, curr_act, next_act, spat_refs[-1]
-                )
+                try:
+                    gen_dist, next_spat_ref_prob = generate_dist_spatially(
+                        h, curr_act, next_act, spat_refs[-1]
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        'Cannot generate distance spatially. '
+                        f'Agent {self.info}, category {self.category}, '
+                        f'home {self.home_geom}, trip #{i}, '
+                        f'current act {curr_act}, next act {next_act}, '
+                        f'current location {coords[-1]} {spat_refs[-1]}'
+                    ) from e
                 # get not only distance, but spatial reference based on stats.
                 # it's proven, that distance distribution might have two peaks
                 # depending on where does a person departs from or where to
@@ -418,37 +433,71 @@ class Agent:
                     filtered = facilities[next_act_l][
                         facilities[next_act_l]['capacity'] > 0
                     ]
+                    # run refiller if no capacity remains
+                    if len(filtered) == 0:
+                        if refiller is not None:
+                            if next_act_l not in refiller:
+                                raise RuntimeError(
+                                    f"Refill enabled, but {next_act_l} "
+                                    "doesn't exist"
+                                )
+                            if len(refiller[next_act_l]) == 0:
+                                raise RuntimeError(
+                                    'Cannot refill capacities of '
+                                    f'`{next_act_l}` facilities amymore - no '
+                                    'available capacity, but additional were '
+                                    'requested. '
+                                )
+                            facilities[next_act_l]['capacity'] = (
+                                refiller[next_act_l].pop()
+                            )
+                            logging.info(
+                                f'Facilities of `{next_act_l}` were refilled, '
+                                f"{facilities[next_act_l]['capacity'].sum()} "
+                                'of total capacity added, '
+                                f'{len(refiller[next_act_l])} refills left'
+                            )
+                            filtered = facilities[next_act_l][
+                                facilities[next_act_l]['capacity'] > 0
+                            ]
+                        else:
+                            raise RuntimeError(
+                                f'All facilities of activity {next_act_l} '
+                                'were used, no capacity left'
+                            )
                 else:
                     filtered = facilities[next_act_l]
 
-                filtered_idx = include_indices(
-                    filtered, h, next_act_l
-                )
-                # filter by indices probabilities where applicable
-
                 filtered_tar = include_target_probability(
-                    filtered, h, next_act_l
+                    filtered, h, next_spat_ref_prob
                 )
                 # filter by target probability if present
 
+                filtered_idx = include_indices(
+                    filtered_tar, h, next_act_l
+                )
+                # filter by indices probabilities where applicable
+
                 filtered_rel = include_relations(
-                    filtered, h, next_act_l, spat_refs[-1]
+                    filtered_idx, h, next_act_l, spat_refs[-1]
                     # or visited_dict[v.acts['home']]['spatial_ref']
                 )
                 # if relations are available, reduce possibilities
 
-                if next_act_l in v.cluster_affected:
+                if next_act_l in v.cluster_affected and len(filtered_rel):
                     # prefer places that lie in predefined clusters
                     filtered_cls = get_places_cluster(
-                        filtered, facilities,
+                        filtered_rel, facilities,
                         next_act_l, gen_dist, coords[-1]
                     )
                 else:
-                    filtered_cls = filtered
+                    filtered_cls = filtered_rel
 
-                if spat_refs[-1][h['target_probabilities'].precision] != next_spat_ref_prob:
-                    # or spat_refs[PRECISIONS['target_probabilities']][-1] ==
-                    # 'suburb' and next_spat_ref == 'city':
+                curr_spat_ref = spat_refs[-1][
+                    h['target_probabilities'].precision
+                ]
+                if curr_spat_ref != next_spat_ref_prob:
+                    # or curr_spat_ref == 'suburb' and next_spat_ref == 'city':
                     #     alter_suburb_dist
 
                     # creates new distance based on reachability
@@ -460,19 +509,34 @@ class Agent:
                 else:
                     new_gen_dist = gen_dist
 
-                idx_idx = set(filtered_idx.index.tolist())
-                rel_idx = set(filtered_rel.index.tolist())
-                cls_idx = set(filtered_cls.index.tolist())
-                tar_idx = set(filtered_tar.index.tolist())
+                # tar_idx = set(filtered_tar.index.tolist())
+                # cls_idx = set(filtered_cls.index.tolist())
+                # rel_idx = set(filtered_rel.index.tolist())
+                # idx_idx = set(filtered_idx.index.tolist())
 
-                isect = list(
-                    best_intersection([idx_idx, rel_idx, cls_idx, tar_idx])
-                )
-                filtered = facilities[next_act_l].loc[isect]
+                # isect = list(
+                #     set.intersection(*[
+                #         idx for idx in
+                #         [tar_idx, idx_idx, cls_idx, rel_idx]
+                #         if idx
+                #     ])
+                # )
+
+                # isect = list(
+                #     best_intersection(
+                #         sets=[
+                #             idx for idx in
+                #             [tar_idx, idx_idx, cls_idx, rel_idx]
+                #             if idx
+                #         ]
+                #     )
+                # )
+
+                #filtered = facilities[next_act_l].loc[isect]
 
                 fclt, coord, next_spat_ref = get_min_diff(
                     facilities, next_act_l, new_gen_dist,
-                    coords[-1], reduce, filtered,
+                    coords[-1], reduce, filtered_cls,  # !!! filtered
                     extended=True,
                     closer_to_home=closer_to_home,
                     home_coord=self.home_geom,
@@ -1991,7 +2055,10 @@ def generate_dist_spatially(
     acts_comb = f'{curr_act}_{next_act}'
     prob_col = acts_comb if acts_comb in h['target_probabilities'].columns else next_act
     dist_col = acts_comb if f'{acts_comb}_scale' in h['distances'].columns else next_act
-    cond_prob = h['target_probabilities'][h['target_probabilities'].precision] == curr_spat_ref[h['target_probabilities'].precision]
+    cond_prob = (
+        h['target_probabilities'][h['target_probabilities'].precision] ==
+        curr_spat_ref[h['target_probabilities'].precision]
+    )
 
     prob_probs = h['target_probabilities'].loc[cond_prob, prob_col]
     if prob_probs.sum() == 0:
@@ -2416,7 +2483,7 @@ def include_indices(
             indices['prob'] = indices['prob'] / indices['prob'].sum()
         ind = np.random.choice(indices['index'], size=1,
                                replace=True, p=indices['prob']).item()
-        filtered = filtered[filtered['index'] == ind]
+        filtered = filtered[filtered['index'] == ind].copy()
         if len(filtered) == 0:
             raise RuntimeError(
                 f'No {act_l} facilities with index {ind}, act {act_l}')
@@ -2488,6 +2555,10 @@ def include_relations(
     if 'relations' in h:
         if act_l not in set(h['relations']['activity']):
             return filtered
+        if len(filtered) == 0:
+            # target_probability likely sent to place which has no capacity
+            # drawing from empty sample will result in error, so rather bail
+            return filtered
         relations = h['relations'][h['relations']['activity'] == act_l]
         avail_spat_units = filtered[relations.target_precision].unique()
         targ = relations.target_precision + '_target'
@@ -2497,7 +2568,9 @@ def include_relations(
             ]
         normalized = relations['prob'] / relations['prob'].sum()
         sp_unit = np.random.choice(relations[targ], p=normalized)
-        filtered = filtered[filtered[relations.target_precision] == sp_unit]
+        filtered = filtered[
+            filtered[relations.target_precision] == sp_unit
+        ].copy()
     return filtered
 
 
@@ -2568,32 +2641,13 @@ def get_min_diff(
         Tuple of 2 or 3 elements
 
     """
-    refilled = False
-
     if closer_to_home and home_coord is None:
         raise RuntimeError(
             'When closer_to_home is True, home_coord must be provided'
             )
-    # !!! Probably reenable later, or move to other place
-    # if act in v.capacity_affected:
-    #     facility_df = facility_df[facility_df['capacity'] > 0]
-
     if xycoords is None:
         pick = facility_df.index
     else:
-
-        # if capacity_refiller is not None:  # !!! incremental assignment
-        #     if act == v.acts['work']:
-        #         if facility_df['capacity'].sum() == 0:
-        #                 if refilled_times >= refill_limit:
-        #                     raise RuntimeError(
-        #                         f'Cannot refill capacities of activity `{act}`. '
-        #                         f'Refill limit of {refill_limit} reached, '
-        #                         f'but capacities are still insufficient'
-        #                     )
-        #                 facilities[act]['capacity'] = capacity_refiller
-        #                 refilled = True
-
         dists = proj_distance_df(facility_df, xycoords)
         diffs = (dists - gen_dist)  # .abs() ?
         diffs_weighted = diffs
@@ -2627,9 +2681,15 @@ def get_min_diff(
         if not fail_on_error:
             # next time, if function fails even with
             # all facilities of type, throws an error
+            if act in v.capacity_affected:
+                all_facilities = facilities[act][
+                    facilities[act]['capacity'] > 0
+                ]
+            else:
+                all_facilities = facilities[act]
             return get_min_diff(
                 facilities, act, gen_dist,
-                xycoords, reduce, facilities[act],
+                xycoords, reduce, all_facilities,
                 extended=extended,
                 fail_on_error=True,
                 closer_to_home=closer_to_home,
@@ -2855,7 +2915,8 @@ def handle_and_write_regular_agents(
                 f'{"-" * 36}\n{traceback.format_exc()}'
                 f'{"-" * 36}\nBailing from process {process}' +
                 f' with {i} handled agents and'
-                f' {len(agents_list[i:])} unhandled'
+                f' {len(agents_list[i:])} unhandled. Agent that failed: '
+                f'{agent.info} {agent}'
             )
             for a in agents_list[i:]:
                 a.info = 'failed'

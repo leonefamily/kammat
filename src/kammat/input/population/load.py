@@ -138,13 +138,13 @@ def handle_population(
             agents_list=population['regular'],
             file=csv_path
         )
-    fail = len([a.info == 'failed' for a in population['regular']])
+    fail = len([a for a in population['regular'] if a.info == 'failed'])
     if fail:
         raise RuntimeError(
             'There has been an error during population processing, which '
-            f'resulted in {fail} agents from `regular` population '
-            'failure while handled. See logs for more details. '
-            'Population has been saved anyways'
+            f'resulted in inability to handle {fail} out of '
+            f'{len(population["regular"])} agents from `regular` population. '
+            'See logs for more details. Population has been saved anyways'
         )
     analyze_population_basic(
         agents_lists=population,

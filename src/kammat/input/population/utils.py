@@ -12,14 +12,15 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from pathlib import Path
-from typing import Union, List, Tuple, Any, Set
 from datetime import timedelta as td, datetime as dt
+from typing import Union, List, Tuple, Any, Set, Optional
 
 
 def best_intersection(
-        sets: List[Set[Any]]
+        sets: List[Set[Any]],
+        max_depth: Optional[int] = None
 ) -> Set[Any]:
-    """
+    r"""
     Return biggest intersection of sets starting with combining all.
 
     Tries the intersection of all sets first, then every combination that
@@ -32,6 +33,16 @@ def best_intersection(
     ----------
     sets : List[Set[Any]]
         List containing sets, populated or empty.
+    max_depth : int, optional
+        Which level will be the deepest when trying to intersect. Imagine them
+        as a flipped pyramid - the bigger the number, the deeper. 1 means only
+        first level, e.g. only test intersection of ALL provided sets.
+        The default is None (all the way to the standalone sets level).
+         ________
+        \       / 1
+         \     /  2
+          \   /   3
+           \ /     ...
 
     Returns
     -------
@@ -45,7 +56,10 @@ def best_intersection(
     best = set()
     best_size = -1
 
+    levels = 0
     for r in range(len(sets), 0, -1):
+        if max_depth is not None and max_depth <= levels:
+            break
         for combo in itertools.combinations(sets, r):
             inter = combo[0].copy()
             for s in combo[1:]:
@@ -61,6 +75,7 @@ def best_intersection(
                 continue
         if best_size > 0:
             break
+        levels += 1
     return best
 
 
