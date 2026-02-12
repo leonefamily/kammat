@@ -57,6 +57,7 @@ def parse_args(
     parser.add_argument('-S', '--sample', type=float, default=1.)
     parser.add_argument('-it', '--include-teleported', action='store_true')
     parser.add_argument('-ur', '--use-regr', action='store_true')
+    parser.add_argument('-ic', '--incremental-capacity-allocation-parts', type=int)
     args = parser.parse_args(args_list)
     return args
 
@@ -185,5 +186,6 @@ if __name__ == '__main__':
         sample=args.sample,
         include_teleported=args.include_teleported,
         pickle_path=args.pickle_path,
-        oneway_flows_path=args.oneway_flows_path
+        oneway_flows_path=args.oneway_flows_path,
+        incremental_capacity_allocation_parts=args.incremental_capacity_allocation_parts
     )

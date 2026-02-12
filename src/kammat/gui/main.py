@@ -187,6 +187,9 @@ def get_full_layout(
         [sg.Text('Population fraction', size=15),
          sg.Slider(range=(0.01, 1), orientation='h', resolution=0.01,
                    default_value=1, key='-POPFRAC-', expand_x=True)],
+        [sg.Text('Incremental capacity allocation', size=15),
+         sg.Slider(range=(1, 10), orientation='h', resolution=1,
+                   default_value=1, key='-INCRCAP-', expand_x=True)],
         [sg.Text('Facilities shape*', size=15),
          sg.Input('', key='-POPPATH-', expand_x=True),
          sg.FileBrowse(key='-POP-', size=6)],
@@ -629,6 +632,7 @@ def check_validity(
         vvs['population']['stops_path'] = values['-STOPPATH-']
         vvs['population']['oneway_flows_path'] = values['-OFLOWPATH-']
         vvs['population']['sample'] = values['-POPFRAC-']
+        vvs['population']['incremental_capacity_allocation_parts'] = int(values['-INCRCAP-'])
         vvs['population']['modal_split_save_path'] = wd_population / 'modal_split.csv'
         vvs['population']['facilities_counts_save_path'] = wd_population / 'facilities_counts.shp'
         vvs['population']['relational_matrices_save_directory'] = wd_population / 'relations'

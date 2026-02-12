@@ -312,7 +312,8 @@ def main(
                         pt_legs=pt_legs,
                         pt_stops=pt_stops,
                         pt_schedule=pt_schedule,
-                        link_ids=shlex.split(link_id),
+                        link_stops_ids=shlex.split(link_id),
+                        by='link_id',
                         start_time=start_time,
                         end_time=end_time
                     )

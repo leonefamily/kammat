@@ -26,6 +26,7 @@ from kammat.input.data.utils import (
     filter_dynamic_columns, dynamic_columns_valid
     # !!! get_missing_spatial_units?
     )
+from kammat.input.population.utils import split_list
 
 from kammat.defaults.variables import Variables
 
@@ -493,36 +494,21 @@ def split_facilities(
     v = Variables()
     outdict = {num: {} for num in range(pieces)}
     for act, df in facilities.items():
-        if act in v.capacity_affected:
-            newdf = df.copy()
-            # try to equally split
-            newdf['quotient'], newdf['remainder'] = newdf['capacity'].divmod(pieces)
-
-            for num in range(pieces):
-                newdf[f'remainder{num}'] = 0
-
-            # if split wasn't equal, randomize remainder
-            for ind in newdf[newdf['remainder'] != 0].index:
-                # randomly assign one to some remainder columns
-                # but max only once per column
-                to_put = np.random.choice(range(pieces),
-                                          newdf.loc[ind].remainder,
-                                          replace=False)
-                cols = [f'remainder{put}' for put in to_put]
-                newdf.loc[ind, cols] = 1
-
-            for num in range(pieces):
-                part_df = newdf.copy()
-                part_df['capacity'] = part_df['quotient'] + part_df[f'remainder{num}']
-                dropcols = [c for c in part_df.columns
-                            if 'remainder' in c or 'quotient' in c]
-                part_df = part_df[part_df['capacity'] != 0]
-                outdict[num].update({act: part_df.drop(dropcols, axis=1)})
-
+        if act in v.capacity_split_affected:
+            newcaps = split_list(
+                values=df['capacity'].tolist(),
+                n_parts=pieces
+            )
         else:
-            for num in range(pieces):
-                outdict[num].update({act: df})
-        logging.info(f'Act {act} facilities splitted')
+            newcaps = None
+            newdf = df
+        for num in range(pieces):
+            if newcaps is not None:
+                newdf = df.copy()
+                newdf['capacity'] = newcaps[num]
+                newdf = newdf[newdf['capacity'] != 0]
+            outdict[num].update({act: newdf})
+        logging.info(f'Act {act} facilities split')
     return outdict
 
 

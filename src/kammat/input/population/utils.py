@@ -79,6 +79,52 @@ def best_intersection(
     return best
 
 
+def split_list(
+        values: List[int],
+        n_parts: int
+) -> List[List[int]]:
+    """
+    Split ``values`` into ``n_parts`` sub‑lists.
+
+    Each integer is divided as evenly as possible among the parts.
+    If division is not resulting in a whole number, remainder is distributed
+    to random parts. Sum of sums of sublists will be equal to sum of original.
+
+    Parameters
+    ----------
+    values : List[int]
+        List with integers.
+    n_parts : int
+        How many parts will the resulting list consist of.
+
+    Returns
+    -------
+    List[List[int]]
+
+    """
+    parts = [[0] * len(values) for _ in range(n_parts)]
+    sums = {n: 0 for n in range(n_parts)}
+
+    for idx, val in enumerate(values):
+        base, remainder = divmod(val, n_parts)
+
+        for n, p in enumerate(parts):
+            p[idx] = base
+            sums[n] += base
+
+        extra_indices = list(
+            sorted(
+                sums,
+                key=lambda x: sums.get(x)
+            )
+        )[:remainder]
+        for i in extra_indices:
+            parts[i][idx] += 1
+            sums[i] += 1
+
+    return parts
+
+
 def scale_to_percent(
         arr: List[int],
         perc: float = 0.9

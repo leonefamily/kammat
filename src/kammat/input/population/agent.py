@@ -26,7 +26,8 @@ from kammat.defaults.constants import (
     SPATIAL_LEVELS_LIST, PRIVATE_MODES, MODAL_SPLIT_MODES
 )
 from kammat.input.population.utils import (
-    proj_distance, proj_distance_df, td_to_str, intify, best_intersection
+    proj_distance, proj_distance_df, td_to_str, intify, best_intersection,
+    split_list
 )
 from kammat.defaults.constants import CACHE_SETTINGS_PATH
 
@@ -121,6 +122,8 @@ class Agent:
     csv_buffer : StringIO
         Buffer containing a row describing the agent for further analysis
         after stacking into csv file
+    error : Optional[str]
+        None if no error happened to the agent, traceback's string if it did.
 
     """
 
@@ -198,6 +201,7 @@ class Agent:
         self.xml_buffer = StringIO()
         self.csv_buffer = StringIO()
         self.info = info
+        self.error = None
 
     def __str__(self):
         start = self.starttimes[1] if len(self.starttimes) > 1 else None
@@ -430,11 +434,9 @@ class Agent:
                 next_act_l = next_act.lower()
 
                 if next_act_l in v.capacity_affected:
-                    filtered = facilities[next_act_l][
-                        facilities[next_act_l]['capacity'] > 0
-                    ]
-                    # run refiller if no capacity remains
-                    if len(filtered) == 0:
+                    empty = facilities[next_act_l]['capacity'].sum() == 0
+                    if empty:
+                        # run refiller if no capacity remains
                         if refiller is not None:
                             if next_act_l not in refiller:
                                 raise RuntimeError(
@@ -465,6 +467,13 @@ class Agent:
                                 f'All facilities of activity {next_act_l} '
                                 'were used, no capacity left'
                             )
+                    else:
+                        if reduce:
+                            filtered = facilities[next_act_l][
+                                facilities[next_act_l]['capacity'] > 0
+                                ]
+                        else:
+                            filtered = facilities[next_act_l]
                 else:
                     filtered = facilities[next_act_l]
 
@@ -532,7 +541,7 @@ class Agent:
                 #     )
                 # )
 
-                #filtered = facilities[next_act_l].loc[isect]
+                # filtered = facilities[next_act_l].loc[isect]
 
                 fclt, coord, next_spat_ref = get_min_diff(
                     facilities, next_act_l, new_gen_dist,
@@ -1372,8 +1381,9 @@ class Agent:
             use_links: bool = False,
             prefer_private: bool = True,
             abandon_pt: bool = False,
-            include_teleported: bool = False
-            ):
+            include_teleported: bool = False,
+            refiller: Optional[Dict[str, List[List[int]]]] = None
+    ):
         """
         Process agent depending on types of passed data. Changes agent's data
 
@@ -1393,12 +1403,16 @@ class Agent:
             Leave from pt, if trip is too long. The default is False.
         include_teleported : bool, optional
             Whether to generate XML block for walk/bike/carpool activities
+        refiller : Dict[str, List[List[int]]], optional
+            Provide refill of capacity once it reaches zero for facilities
+            affected by capacity limits. The default is None (no refill).
 
         """
         if 'target_probabilities' in h:
             self.pick_dists_facilities_spatially(
-                facilities, h
-                )
+                facilities, h,
+                refiller=refiller
+            )
         else:
             self.generate_dists(h)
             pick_facilities(
@@ -1670,7 +1684,8 @@ def alter_any_dist(
 def get_places_cluster(
         filtered: Union[gpd.GeoDataFrame, pd.DataFrame],
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
-        next_act_l: str, gen_dist: Union[int, float],
+        next_act_l: str,
+        gen_dist: Union[int, float],
         prev: Union[Tuple[float], List[float]],
         inner_offset: Union[int, float] = 0,
         outer_offset: Union[int, float] = v.cluster_dist_thresh,
@@ -1724,7 +1739,9 @@ def get_places_cluster(
     if len(clusts) == 0 or len(clfiltered) == 0:
         return filtered
     caps = {
-        cl: facilities[next_act_l][facilities[next_act_l]['cluster_id'] == cl]['capacity'].sum()
+        cl: facilities[next_act_l][
+            facilities[next_act_l]['cluster_id'] == cl
+        ]['capacity'].sum()
         for cl in clusts
     }
     caps = {
@@ -2565,12 +2582,22 @@ def include_relations(
         relations = relations[
             (relations[relations.precision] == spat_ref[relations.precision]) &
             (relations[targ].isin(avail_spat_units))
-            ]
+        ]
         normalized = relations['prob'] / relations['prob'].sum()
-        sp_unit = np.random.choice(relations[targ], p=normalized)
-        filtered = filtered[
-            filtered[relations.target_precision] == sp_unit
-        ].copy()
+        try:
+            sp_unit = np.random.choice(relations[targ], p=normalized)
+            filtered = filtered[
+                filtered[relations.target_precision] == sp_unit
+            ].copy()
+        except ValueError:
+            logging.warning(
+                f'Relations cound not be included for activity {act_l}, '
+                f'Last spatial reference: {spat_ref}, available '
+                f'{relations.target_precision}s: {avail_spat_units} '
+                f'with probabilities {normalized.tolist()}. '
+                'Caused error:\n' + traceback.format_exc()
+            )
+            return filtered.copy()
     return filtered
 
 
@@ -2586,10 +2613,7 @@ def get_min_diff(
         closer_to_home: bool = False,
         home_coord: Tuple[float] = None,
         prev_act: str = None,
-        next_act: str = None,
-        capacity_refiller: List[int] = None,
-        refilled_times: int = 0,
-        refill_limit: int = 4
+        next_act: str = None
         ) -> Union[Tuple[str, Tuple[float, float], Dict[str, str]],
                    Tuple[str, Tuple[float, float]]]:
     """
@@ -2623,11 +2647,6 @@ def get_min_diff(
         Code of previous act. Is checked whether it *IS NOT* home.
     next_act : str, optional
         Code of the next act. Is checked, whether it *IS* home.
-    capacity_refiller : List[int], optional
-    
-    refilled_times : int, optional
-    
-    refill_limit : int, optional
 
     Raises
     ------
@@ -2675,8 +2694,11 @@ def get_min_diff(
     try:
         facility_index = random.choice(pick)
     except IndexError:
-        logging.warning(f'Empty sample, activity: {act}, '
-                        f'reduce: {reduce}, gen_dist: {gen_dist}')
+        logging.warning(
+            f'Empty sample, activity: {act}, '
+            f'reduce: {reduce}, gen_dist: {gen_dist}, '
+            f'prev_act: {prev_act}, next_act: {next_act}'
+        )
 
         if not fail_on_error:
             # next time, if function fails even with
@@ -2846,8 +2868,9 @@ def handle_and_write_regular_agents(
         use_links: bool = False,
         include_teleported: bool = False,
         action_on_lacking_capacity: Literal['error', 'warn', 'increase'] = 'warn',
-        reserved_ratio: float = 0.1
-        ) -> List[Agent]:
+        reserved_ratio: float = 0.1,
+        incremental_capacity_allocation_parts: int = 1
+) -> List[Agent]:
     """
     Process and write all passed agents according to conditions in helpers
     # !!! TODO: add more parameters to function declaration
@@ -2877,6 +2900,10 @@ def handle_and_write_regular_agents(
         The default is 'warn'.
     reserved_ratio : float, optional
         Ratio to keep reserved (in range from 0 to 1). The default is 0.1.
+    incremental_capacity_allocation_parts : int, optional
+        Number of parts that affected facilities' capacities will be split into
+        and added back incrementally after previous batch runs out. The default
+        is 1. If number of parts is 1 or less, no split will be done.
 
     Returns
     -------
@@ -2894,9 +2921,24 @@ def handle_and_write_regular_agents(
 
     check_capacity_sufficiency(
         agents_list, facilities, action_on_lacking_capacity, reserved_ratio
-        )
+    )
 
-    # orig_work_capacities = facilities['wor'].set_index('facilities')['capacity']
+    orig_capacities = {
+        k: facs['capacity'].tolist()
+        for k, facs in facilities.items()
+        if 'capacity' in facs.columns
+    }
+    if incremental_capacity_allocation_parts <= 1:
+        refiller = None
+    else:
+        refiller = {}
+        for act, facs in facilities.items():
+            if act in v.capacity_split_affected:
+                refiller[act] = split_list(
+                    values=facs['capacity'].astype(int).tolist(),
+                    n_parts=incremental_capacity_allocation_parts
+                )
+                facs['capacity'] = refiller[act].pop()
 
     random.shuffle(agents_list)
     proctimes = []
@@ -2908,11 +2950,13 @@ def handle_and_write_regular_agents(
                 facilities, h,
                 use_links=use_links, prefer_private=prefer_private,
                 abandon_pt=abandon_pt, include_teleported=include_teleported,
+                refiller=refiller
             )
-        except Exception as e:
+        except Exception:
+            agent.error = traceback.format_exc()
             logging.error(
                 f'Process {process} failed on agent {i} with error:\n'
-                f'{"-" * 36}\n{traceback.format_exc()}'
+                f'{"-" * 36}\n{agent.error}'
                 f'{"-" * 36}\nBailing from process {process}' +
                 f' with {i} handled agents and'
                 f' {len(agents_list[i:])} unhandled. Agent that failed: '

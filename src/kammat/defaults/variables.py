@@ -193,7 +193,9 @@ class Variables:
         # if calculation is multiprocess, capacity of these facilities is going
         # to evenly redistribute across all processes, e.g. if facility has
         # capacity 600 and there are 6 processes, every process will have
-        # capacity 100 on this facility
+        # capacity 100 on this facility. Also works for incremental capacity
+        # assignment (capacity is split into X parts, and new part is not
+        # introduced unless previous is completely exhausted)
 
         self.shuffle_dup_facility: Tuple[str] = (self.acts['work'],
                                                  self.acts['worktrip'],
