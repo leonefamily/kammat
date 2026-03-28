@@ -65,7 +65,7 @@ def load_time_courses(
                         f"from time courses: {unexpected}")
 
     if req_modes:
-        if set(modes).difference(set(req_modes)):
+        if not set(req_modes).issubset(set(modes)):
             raise RuntimeError(f"Time courses must have modes: {req_modes}")
 
     normalize_probability_columnwise(table, modes)

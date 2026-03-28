@@ -280,11 +280,15 @@ def handle_spatial_comparison(
         merge_bidir_roads: bool = False
         ) -> Optional[gpd.GeoDataFrame]:
     prev_net = gpd.read_file(prev_net_path).sort_values(
-        comparison_columns,
+        comparison_columns
+        if isinstance(comparison_columns, str)
+        else list(comparison_columns),
         ascending=False
     )
     net = gpd.read_file(curr_net_path).sort_values(
-        comparison_columns,
+        comparison_columns
+        if isinstance(comparison_columns, str)
+        else list(comparison_columns),
         ascending=False
     )
     # assume crs are planar (in meters)
