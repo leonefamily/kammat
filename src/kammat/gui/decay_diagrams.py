@@ -265,7 +265,10 @@ def main(
                     legs = pd.read_table(
                         window['-LEGSPATH-'].get(),
                         sep=';',
-                        decimal=','
+                        decimal=',',
+                        converters={'transit_route': str,
+                                    'transit_line': str,
+                                    'vehicle_id': str}
                     )
                     pt_legs = legs[
                         legs['trip_id'].isin(

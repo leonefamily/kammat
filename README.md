@@ -9,6 +9,16 @@ Word _kammat_ means _combed_ in Swedish, hence the choice of the logo design,
 it also matches the purpose overall - make process of generating MATSim population
 and analyzing its outputs more straightforward and easy.
 
+The project is licensed under GPL v2.[^1] 
+
+[^1]: For now, the external package pt2matsim is included as a .jar file
+in /src/bin directory, which is licensed under GPL v2 as well. There are plans to reimplement
+that functionality in Python within this tool.
+
+> ### **DISCLAIMER!** 
+> This software is currently in alpha state with remains of old and/or bad practice code, 
+with incomplete or lacking documentation, no tests and no example files. 
+Contents can (and will) change significantly at any moment without notice, use with caution.
 
 ## Installation
 ### Windows
@@ -29,7 +39,7 @@ In the result you'll be able to launch the graphical user interface
 of this package by typing `kammat-gui` while in the virtual environment.
 ## Usage
 ### Types of input data
-TODO: You can find every file's example in `examples` directory.
+TODO: You will eventually find every file's example in `examples` directory.
 
 Main limitations:
 - if _non-strict diaries_ are used, _times_ are obligatory;

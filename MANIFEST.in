@@ -1,2 +1,2 @@
-recursive-include transport_model_tools/bin *.jar
-recursive-include transport_model_tools/defaults/matsim *
+recursive-include kammat/bin *.jar
+recursive-include kammat/defaults/matsim *
