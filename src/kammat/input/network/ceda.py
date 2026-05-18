@@ -681,7 +681,8 @@ def write_network(
         if 'link_id' in attrs:
             bigstring.write(generate_link_string(fr, to, attrs))
         else:
-            bigstring.write(generate_link_string(fr, to, attrs, j))
+            attrs['link_id'] = j
+            bigstring.write(generate_link_string(fr, to, attrs))
 
     bigstring.write('</links>\n')
     bigstring.write('</network>\n')
@@ -695,7 +696,7 @@ def generate_link_string(
         fr: Union[str, int],
         to: Union[str, int],
         attrs: Dict[str, Any],
-        add_attrs: Tuple[str] = ('nofacility', 'geometry', 'alt_link_id')
+        add_attrs: Tuple[str] = ('nofacility', 'geometry', 'alt_link_id', 'name')
 ):
     l_len = attrs["METER"]
     l_id = attrs["link_id"]

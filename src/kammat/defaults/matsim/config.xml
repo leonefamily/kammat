@@ -101,7 +101,7 @@
 		<param name="insistingOnDeprecatedConfigVersion" value="true" />
 		<!-- "global" number of threads.  This number is used, e.g., for replanning, but NOT in QSim.  This can typically be set to as many cores as you have available, or possibly even slightly more. -->
 		<param name="numberOfThreads" value="10" />
-		<param name="randomSeed" value="4711" />
+		<param name="randomSeed" value="4711" />  <!-- 4711 -->
 	</module>
 	<module name="hermes" >
 		<!-- Simulation End Time -->
