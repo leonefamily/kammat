@@ -551,23 +551,25 @@ class Agent:
                         closer_to_home=closer_to_home,
                         home_coord=self.home_geom,
                         prev_act=curr_act,
-                        next_act=next_next_act,
+                        next_act=next_next_act
                     )
                 except Exception as e:
                     exc_str = (
                         f'No possible facilities found. Agent {self.info}, '
                         f'departing from {curr_act} to {next_act_l}, '
                         f'then {next_next_act}, distance {new_gen_dist}. '
-                        f'Agent home {self.home_facility} {self.home_facility}. '
+                        f'Agent home {self.home_facility} {self.home_geom}. '
                         f'This should not normally happen, something is misconfigured.\n'
+                        f'Filtered facilities capacity {filtered_cls["capacity"].sum()}, '
+                        f'without filtering: {facilities[next_act_l]["capacity"].sum()}'
                     )
                     if refiller is not None:
                         if next_act_l in v.capacity_split_affected:
-                            exc_str += f"Available unfiltered facilities: {facilities[next_act_l]['capacity'].sum()}"
+                            exc_str += f"Available unfiltered facilities: {facilities[next_act_l]['capacity'].sum()}\n"
                             if next_act_l not in refiller:
                                 exc_str += "Refilling was turned on, and it ran out of options"
                             else:
-                                exc_str += "Refilling was turned on, and there are still options"
+                                exc_str += f"Refilling was turned on, and there are still {len(refiller['next_act_l'])} options"
                         else:
                             exc_str += "Refilling was turned on, but didn't affect this activity"
                     else:
