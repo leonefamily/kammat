@@ -55,60 +55,49 @@ def run_pt2matsim(
         Whether to map schedules on existing links. The default in False.
 
     """
-    # generate schedule and vehicles XML
-    run_subprocess((
-        'java',
-        '-cp',
-        str(executable_path),
-        'org.matsim.pt2matsim.run.Gtfs2TransitSchedule',
-        str(gtfs_folder),
-        'dayWithMostTrips',
-        'WGS84',
-        str(output_schedule_path),
-        str(output_vehicles_path),
-    ))
+    # geterate schedule and vehicles xml
+    cmd = (f'java -cp "{executable_path}" '
+           'org.matsim.pt2matsim.run.Gtfs2TransitSchedule '
+           f'"{gtfs_folder}" dayWithMostTrips '
+           f'WGS84 "{output_schedule_path}" "{output_vehicles_path}"')
+    run_subprocess(cmd)
 
     temp_config = tempfile.NamedTemporaryFile(delete=False, suffix='.xml')
     temp_config.close()
-    try:
-        # generate config to unify car and PT network
-        run_subprocess((
-            'java',
-            '-cp',
-            str(executable_path),
-            'org.matsim.pt2matsim.run.CreateDefaultPTMapperConfig',
-            str(temp_config.name),
-        ))
+    # generate config to unify car and pt network
+    cmd = (f'java -cp "{executable_path}" '
+           'org.matsim.pt2matsim.run.CreateDefaultPTMapperConfig '
+           f'"{temp_config.name}"')
+    run_subprocess(cmd)
 
-        parser = lxml.etree.XMLParser(remove_comments=False)
-        tree = lxml.etree.parse(temp_config.name, parser=parser)
+    # replace values in config
+    parser = lxml.etree.XMLParser(remove_comments=False)
+    tree = lxml.etree.parse(temp_config.name, parser=parser)
 
-        replacements = {
-            'inputNetworkFile': net_path,
-            'inputScheduleFile': output_schedule_path,
-            'outputNetworkFile': output_net_path,
-            'outputScheduleFile': output_schedule_path,
-            'numOfThreads': number_of_threads,
-            'modesToKeepOnCleanUp': 'car,truck,para,tram,rail,bus,drt',
-        }
+    replacements = {
+        'inputNetworkFile': net_path,
+        'inputScheduleFile': output_schedule_path,
+        'outputNetworkFile': output_net_path,
+        'outputScheduleFile': output_schedule_path,
+        'numOfThreads': number_of_threads,
+        'modesToKeepOnCleanUp': 'car,truck,para,tram,rail,bus,drt',  # for potential paratransit
+        # 'scheduleFreespeedModes': 'pt,bus,tram,rail'
+        # !!! add more in function call
+    }
 
-        if map_to_network:
-            replacements['networkModes'] = 'pt,bus,tram,rail'
-        else:
-            replacements['scheduleMode'] = 'pt,bus,tram,rail'
+    if map_to_network:
+        # replacements['travelCostType'] = 'travelTime',
+        replacements['networkModes'] = 'pt,bus,tram,rail'
+    else:
+        replacements['scheduleMode'] = 'pt,bus,tram,rail'
 
-        modify_config(replacements, tree)
-        tree.write(temp_config.name)
+    modify_config(replacements, tree)
 
-        run_subprocess((
-            'java',
-            '-cp',
-            str(executable_path),
-            'org.matsim.pt2matsim.run.PublicTransitMapper',
-            str(temp_config.name),
-        ))
-    finally:
-        try:
-            os.remove(temp_config.name)
-        except FileNotFoundError:
-            pass
+    tree.write(temp_config.name)
+
+    # join pt and car networks
+    cmd = (f'java -cp "{executable_path}" '
+           f'org.matsim.pt2matsim.run.PublicTransitMapper "{temp_config.name}"')
+    run_subprocess(cmd)
+
+    os.remove(temp_config.name)

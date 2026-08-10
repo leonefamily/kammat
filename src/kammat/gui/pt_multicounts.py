@@ -25,7 +25,6 @@ from kammat.gui.utils import (
     save_settings, restore_settings, update_visibility, put_plot_to_image
     )
 from kammat.defaults.constants import CSV_STYLE
-from kammat.gui.tk_compat import ensure_pysimplegui_tcl_compat
 
 import PySimpleGUI as sg
 sg.theme('default1')
@@ -81,7 +80,6 @@ def main(
         Path to MATSim network used in the same run, that produced the counts
 
     """
-    ensure_pysimplegui_tcl_compat(sg)
     layout = [
         [sg.Text('', key='-INFO-', size=60,
                  font=("Courier New", sg.DEFAULT_FONT[1]))],

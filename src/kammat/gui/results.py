@@ -5,120 +5,181 @@ Created on Mon Mar  6 16:58:57 2023
 @author: dgrishchuk
 """
 
-
-"""Results GUI composed over shared configuration, planning, and execution."""
-
-from typing import Any, Mapping, Optional
-
+import re
+import json
+import inspect
+import threading
+from pathlib import Path
 import PySimpleGUI as sg
-
-from kammat.main.configuration import RunConfig, has_errors, load_run_config
-
-#TODO(idrees): fix the naming of variables and modules
-from kammat.gui.run_adapter import (
-    PIPELINE_DONE_KEY,
-    PIPELINE_EVENT_KEY,
-    RESULT_STAGES,
-    prepare_results_plan,
-    results_field_specs,
-    results_form_values,
-    run_gui_plan,
-)
-from kammat.gui.run_model import (
-    GuiRunCompletion,
-    GuiRunController,
-    GuiRunEventEnvelope,
-    gui_issue,
-)
-from kammat.gui.run_present import apply_run_update, issue_update, issues_update
-from kammat.gui.tk_compat import ensure_pysimplegui_tcl_compat
-
+from typing import Union, Dict, Any
+from kammat.gui.utils import (
+    control_disabled, prepare_command, run_subprocess
+    )
+from kammat.defaults.constants import PathPointer
 
 sg.theme('default1')
 
 
-def _apply_pipeline_updates(window: Any, updates: tuple):
-    first_issue = None
-    for update in updates:
-        issue = apply_run_update(
-            window,
-            update,
-            tab_key=None,
-            pause_key=None,
-            resume_key=None,
-        )
-        if issue is not None:
-            if first_issue is None:
-                first_issue = issue
-            try:
-                window['-CONSOLE-'].print(
-                    '{0} {1}: {2}'.format(
-                        issue.code, issue.field, issue.message
-                    ),
-                    text_color='firebrick1',
-                )
-            except Exception:
-                pass
-    return first_issue
+def filter_keys(
+        values: Dict[str, Any]
+        ):
+    ret_keys = [
+        k.split('|')[0] for k, v in values.items() if '|launch|' in k and v        
+        ]
+    vvs = {
+        k: {} for k in ret_keys
+        }
+
+    for ret_key in ret_keys:
+        for key, val in values.items():
+            if key.startswith(ret_key):
+                matches = re.search(r'\((.*?)\)', key)
+                if matches:
+                    key_name = re.sub(r'\(|\)', '', matches.group(0))
+                    if len(val.strip()) > 0:
+                        vvs[ret_key][key_name] = val
+    return vvs
 
 
-def generate_analysis_layout(config: RunConfig) -> Optional[Mapping[str, Any]]:
-    """Collect typed results edits from schema-derived widgets."""
-
-    ensure_pysimplegui_tcl_compat(sg)
-    defaults = results_form_values(config)
-    fields = results_field_specs()
+def generate_analysis_layout(
+        settings_json: Dict[str, Union[int, float, str, bool]]
+        ):
     inner_layout = []
-    for stage in RESULT_STAGES:
-        rows = [[sg.Checkbox(
-            'launch',
-            key=stage + '|launch|',
-            default=defaults[stage + '|launch|'],
-        )]]
-        for dotted, spec in fields.items():
-            owner, field = dotted.split('.', 1)
-            if owner != stage:
+    for key, content in settings_json.items():
+        if key not in ['gis', 'analysis', 'comparison']:
+            continue
+        layout_row = []
+        for content_key, value in content.items():
+            if content_key == 'launch':
                 continue
-            label = sg.Text(field, size=30, key=stage + '[' + field + ']')
-            if spec.value_kind == 'bool':
-                value_element = sg.Checkbox(
-                    '', key=dotted, default=defaults[dotted]
+            layout_row.append(
+                [sg.Text(content_key, size=30, key=f'{key}[{content_key}]'),
+                 sg.Input(
+                     default_text=value,
+                     size=50,
+                     key=f'{key}({content_key})',
+                     # metadata=type(value) if value is not None else None
+                     ),
+                 sg.FileBrowse()
+                 ]
                 )
-                rows.append([label, value_element])
-            else:
-                value_element = sg.Input(
-                    default_text=defaults[dotted], size=50, key=dotted
-                )
-                if spec.value_kind == 'path':
-                    rows.append([label, value_element, sg.FileBrowse()])
-                else:
-                    rows.append([label, value_element])
-        inner_layout.append([sg.Frame(stage, rows)])
+        layout_row.insert(
+            0,
+            [sg.Checkbox(
+                 'launch',
+                 key=f'{key}|launch|',
+                 default=content['launch'] if 'launch' in content else False
+                 )
+             ]
+            )
+        inner_layout.append(
+            [sg.Frame(key, layout_row)]
+            )
 
-    column = sg.Column(
+    col = sg.Column(
         inner_layout,
         key='-INPUTCOL-',
         size=(720, 500),
         scrollable=True,
-        vertical_scroll_only=True,
-    )
-    edit_window = sg.Window(
-        'Values', [[column], [sg.Button('Apply', key='-APPLY-')]]
-    )
-    selected = None
+        vertical_scroll_only=True
+        )
+    sub_window = sg.Window('Values', [[col], [sg.Button('Run', key='-RUN-')]])
+    vvs = {}
     while True:
-        event, values = edit_window.read()
+        event, values = sub_window.read()
         if event == sg.WINDOW_CLOSED:
             break
-        if event == '-APPLY-':
-            selected = dict(values)
+        elif event == '-RUN-':
+            vvs = filter_keys(values)
             break
-    edit_window.close()
-    return selected
+    sub_window.close()
+    return vvs
 
 
-def main() -> None:
-    ensure_pysimplegui_tcl_compat(sg)
+def run_analysis(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle analyses.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    vvs_a = {
+        k: v for k, v in vvs['analysis'].items() if k not in ['launch']
+    }
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/analysis.py'
+    command = prepare_command(vvs_a, script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-ANALYSIS_THREAD-'
+    )
+    return t
+
+
+def run_comparison(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle comparison.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/comparison.py'
+    vvs_c = {
+        k: v for k, v in vvs['comparison'].items() if k not in ['launch']
+    }
+    command = prepare_command(vvs_c, script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-COMPARISON_THREAD-'
+    )
+    return t
+
+
+def run_gis(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle GIS visualization.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/gis/qgis_project.py'
+    command = f'"{vvs["gis"]["qgis_path"]}" "{script_path}" ' + ' '.join([
+        f'--{k.replace("_", "-")} "{v}"'
+        for k, v in vvs['gis'].items()
+        if k not in ['launch', 'qgis_path']
+    ])
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-GIS_THREAD-'
+    )
+    return t
+
+
+def main():
+
+    functions = {
+        "analysis": run_analysis,
+        "comparison": run_comparison,
+        "gis": run_gis
+    }
+
     layout = [
         [sg.Text('Load settings JSON', size=20),
          sg.Input(key='-JSON-', size=50),
@@ -126,156 +187,45 @@ def main() -> None:
         [sg.Button('Change JSON', key='-CHANGE-'),
          sg.Button('Run', key='-RUN-')],
         [sg.Output(key='-CONSOLE-', size=(25, 20),
-                   expand_x=True, echo_stdout_stderr=False)],
-    ]
+                    expand_x=True,
+                    echo_stdout_stderr=True)]
+        ]
     window = sg.Window('Analysis', layout)
-    controller = GuiRunController()
-    loaded_config = None
-    edit_values = None
+    sg.cprint_set_output_destination(window, '-CONSOLE-')
 
-    try:
-        while True:
-            event, values = window.read()
-            if event == sg.WINDOW_CLOSED:
-                if controller.active:
-                    _apply_pipeline_updates(window, (controller.request_close(),))
-                    continue
-                break
-            if event == '-CHANGE-':
-                if controller.active:
-                    issue, _ = controller.begin(controller.plan, False)
-                    if issue is not None:
-                        _apply_pipeline_updates(window, (issue_update(issue),))
-                    continue
-                loaded = load_run_config(values['-JSON-'])
-                _apply_pipeline_updates(
-                    window, (issues_update(tuple(loaded.issues)),)
-                )
-                if loaded.config is None or has_errors(loaded.issues):
-                    loaded_config = None
-                    edit_values = None
-                    continue
-                loaded_config = loaded.config
-                edit_values = generate_analysis_layout(loaded_config)
-            if event == '-RUN-':
-                if controller.active:
-                    issue, _ = controller.begin(controller.plan, False)
-                    if issue is not None:
-                        _apply_pipeline_updates(window, (issue_update(issue),))
-                    continue
-                if loaded_config is None or edit_values is None:
-                    _apply_pipeline_updates(window, (issue_update(gui_issue(
-                        'KAM-GUI-E104',
-                        'results.settings',
-                        'load and apply results settings before running',
-                    )),))
-                    continue
-                plan, issues = prepare_results_plan(loaded_config, edit_values)
-                _apply_pipeline_updates(window, (issues_update(issues),))
-                if plan is None or has_errors(issues):
-                    continue
-                issue, update = controller.begin(plan, False)
-                if issue is not None or update is None:
-                    if issue is not None:
-                        _apply_pipeline_updates(window, (issue_update(issue),))
-                    continue
-                session = controller.session
-                if session is None:
-                    continue
-                presentation_issue = _apply_pipeline_updates(window, (update,))
-                if presentation_issue is not None:
-                    _apply_pipeline_updates(
-                        window,
-                        controller.accept_completion(GuiRunCompletion(
-                            session.identifier,
-                            0,
-                            issue=presentation_issue,
-                        )),
-                    )
-                    continue
-                try:
-                    window.start_thread(
-                        lambda active_session=session, active_plan=plan: run_gui_plan(
-                            active_session,
-                            active_plan,
-                            window.write_event_value,
-                        ),
-                        PIPELINE_DONE_KEY,
-                    )
-                except Exception as error:
-                    completion = GuiRunCompletion(
-                        session.identifier,
-                        0,
-                        issue=gui_issue(
-                            'KAM-GUI-E103',
-                            'worker.start',
-                            'pipeline worker failed ({0})'.format(
-                                type(error).__name__
-                            ),
-                        ),
-                    )
-                    _apply_pipeline_updates(
-                        window, controller.accept_completion(completion)
-                    )
-            if event == PIPELINE_EVENT_KEY:
-                envelope = values[event]
-                if isinstance(envelope, GuiRunEventEnvelope):
-                    _apply_pipeline_updates(
-                        window, controller.accept_event(envelope)
-                    )
-                else:
-                    envelope_issue = gui_issue(
-                        'KAM-GUI-E104',
-                        'event',
-                        'pipeline event envelope has the wrong type',
-                    )
-                    session = controller.session
-                    state = controller.state
-                    if session is not None and state is not None:
-                        _apply_pipeline_updates(
-                            window,
-                            controller.accept_completion(GuiRunCompletion(
-                                session.identifier,
-                                state.last_sequence,
-                                issue=envelope_issue,
-                            )),
-                        )
-                    else:
-                        _apply_pipeline_updates(
-                            window, (issue_update(envelope_issue),)
-                        )
-            if event == PIPELINE_DONE_KEY:
-                completion = values[event]
-                if not isinstance(completion, GuiRunCompletion):
-                    session = controller.session
-                    state = controller.state
-                    if session is not None and state is not None:
-                        completion = GuiRunCompletion(
-                            session.identifier,
-                            state.last_sequence,
-                            issue=gui_issue(
-                                'KAM-GUI-E103',
-                                'completion',
-                                'pipeline completion has the wrong type',
-                            ),
-                        )
-                if isinstance(completion, GuiRunCompletion):
-                    close_requested = bool(
-                        controller.state is not None
-                        and controller.state.close_requested
-                    )
-                    _apply_pipeline_updates(
-                        window, controller.accept_completion(completion)
-                    )
-                    if close_requested and not controller.active:
-                        return
-    except Exception as error:
-        sg.popup_error(
-            'Results GUI failed ({0})'.format(type(error).__name__)
-        )
-    finally:
-        if not controller.active:
-            window.close()
+    results = {}
+    vvs = {}
+    operation = None
+    is_running = False
+
+    while True:
+        event, values = window.read()
+        if event == '-CHANGE-':
+            with open(values['-JSON-']) as f:
+                settings_json = json.load(f)
+            vvs = generate_analysis_layout(settings_json)
+        elif event == '-RUN-' or re.search('-\S+_THREAD-', event):
+            if event == '-RUN-' and not is_running:
+                stages = list(vvs.keys())
+                control_disabled(window, keys_list=['-RUN-'], disabled=True)
+            else:
+                sg.cprint(f'{operation.capitalize()} finished', text_color='green')
+                results[operation] = values[event]
+                if values[event] != 0:
+                    stages = []
+                    sg.cprint(f'Process {operation} returned error code {values[event]}',
+                              text_color='firebrick1')
+                # operation = re.sub('(-|_THREAD-)', '', event).lower()
+            if stages:
+                operation = stages.pop(0)
+                sg.cprint(f'{operation.capitalize()} started', text_color='green')
+                t = functions[operation](window, vvs)
+                is_running = True
+            else:
+                is_running = False
+                sg.cprint('All finished', text_color='green')
+                control_disabled(window, keys_list=['-RUN-'], disabled=False)
+    window.close()
 
 
 if __name__ == '__main__':
