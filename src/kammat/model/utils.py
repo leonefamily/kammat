@@ -5,16 +5,16 @@ Created on Tue Jan 31 09:44:45 2023
 @author: dgrishchuk
 """
 
+import re
 import os
+import sys
 import lxml
 import math
 import platform
 import subprocess
 import lxml.etree
 from pathlib import Path
-from typing import Dict, Sequence, Tuple, Union
-
-from kammat.model.matsim import get_matsim_runnable_class, get_matsim_version
+from typing import Dict, Tuple, Union
 
 SIZE_NAME: Tuple[str] = ('b', 'k', 'm', 'g', 't')
 
@@ -106,29 +106,25 @@ def suggest_matsim_ram_limit(
 
 
 def run_subprocess(
-        command: Sequence[str]
-        ) -> int:
+        command: str
+        ):
     """
     Run subprocess, fail if any error encountered.
 
     Parameters
     ----------
-    command : Sequence[str]
-        Literal argument vector. String commands are prohibited.
+    command : str
+        Command to pass to shell
 
     """
-    if isinstance(command, (str, bytes)):
-        raise TypeError('run_subprocess requires an argument vector')
-    argv = tuple(command)
-    if not argv or any(not isinstance(item, str) or not item or '\x00' in item
-                       for item in argv):
-        raise ValueError('run_subprocess arguments must be non-empty strings')
-    completed = subprocess.run(argv, shell=False, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(
-            'child process returned error code {0}'.format(completed.returncode)
-        )
-    return completed.returncode
+    p = subprocess.Popen(command, shell=True,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+    for line in p.stdout:
+        print(line.decode(errors='backslashreplace').rstrip())
+    outs = p.wait()
+    if outs != 0:
+        sys.exit(1)
 
 
 def modify_config(
@@ -152,3 +148,69 @@ def modify_config(
         parameter = element.get('name')
         if parameter in replacements:
             element.set('value', replacements[parameter])
+
+
+def get_matsim_version(
+        matsim_executable: Union[str, Path],
+        using_java: bool = False,
+        java_bin: Union[str, Path] = 'java'
+) -> float:
+    """
+    Extract the MATSim version from executable path or its return.
+
+    Currently only MATSim executable path regexing is supported.
+
+    Parameters
+    ----------
+    matsim_executable : Union[str, Path]
+        Path to a MATSim executable.
+    java_bin : Union[str, Path], optional
+        Path to Java binary. The default is `java` - assumming the correct 
+        ``JAVA_HOME`` is in ``PATH``. Unused!
+
+    Raises
+    ------
+    RuntimeError
+        If unable to extract the decimal version digit.
+
+    Returns
+    -------
+    float
+
+    """
+    try:
+        if using_java:
+            # !!! TODO Perform the check through java
+            UserWarning(
+                'Extracting MATSim version using Java is not supported yet, '
+                'fallback to regex'
+            )
+        return float(
+            re.search(r'\d+\.\d+(?=\.jar$)', str(matsim_executable)).group()
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f'Unable to extract MATSim version from path: {matsim_executable}.'
+            ' Should end with `x.x.jar`, where `x.x` is any decimal'
+        ) from e
+
+
+def get_matsim_runnable_class(
+        matsim_version: float
+) -> str:
+    """
+    Get main MATSim runnable class that has been changed since version 14.0.
+
+    Parameters
+    ----------
+    matsim_version : float
+        A decimal representing MATSim version.
+
+    Returns
+    -------
+    str
+
+    """
+    if matsim_version <= 13.0:
+        return 'org.matsim.run.Controler'
+    return 'org.matsim.run.RunMatsim'

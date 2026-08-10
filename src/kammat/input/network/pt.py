@@ -71,7 +71,6 @@ if __name__ == '__main__':
         output_net_path=args.output_net_path,
         output_schedule_path=args.output_schedule_path,
         output_vehicles_path=args.output_vehicles_path,
-        number_of_threads=args.number_of_threads,
         executable_path=args.executable_path,
         default_vehicles_path=args.default_vehicles_path
         )

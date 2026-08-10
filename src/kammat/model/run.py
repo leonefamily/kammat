@@ -193,12 +193,8 @@ def run_matsim(
     else:
         cl = get_matsim_runnable_class(matsim_version=ver)
     cmd = (
-        str(java_bin),
-        '-Xmx{0}'.format(ram_limit),
-        '-cp',
-        str(executable_path),
-        str(cl),
-        str(config_path),
+        f'"{java_bin}" -cp "{executable_path}" -Xmx{ram_limit} '
+        f'{cl} "{config_path}"'
     )
     run_subprocess(cmd)
 
