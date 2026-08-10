@@ -7,7 +7,6 @@ Created on Mon Feb 27 11:03:48 2023
 import logging
 import textwrap
 import webbrowser
-import os
 from pathlib import Path
 from datetime import datetime as dt
 from typing import List, Optional
