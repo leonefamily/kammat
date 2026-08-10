@@ -11,7 +11,7 @@ authors = [
 ]
 description = "A module to handle transformation of input data into MATSim format and process its outputs"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,!=3.10.*"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
@@ -19,7 +19,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12"
 ]
@@ -51,4 +50,4 @@ BEZIER_NO_EXTENSION = "true"
 
 [project.scripts]
 kammat-gui = "kammat.gui.main:main"
-kammat = "kammat.__main__:main"
+kammat = "kammat.cli.app:main"
