@@ -6,130 +6,264 @@ Created on Tue May  7 18:18:04 2024
 @author: leonefamily
 """
 
-
-""" This component run.py: Current non-GUI application adapter for the unified executor."""
-
-import argparse
 import sys
+import inspect
+import argparse
 from pathlib import Path
-from typing import List, Optional, Union
+import subprocess
+import logging
+from typing import List, Dict, Union, Any, Optional
 
-from kammat.main.configure import ConfigurationError, has_errors, load_run_config
-from kammat.main.execution import (
-    ExecutionEnvironment,
-    PipelineRunner,
-    RunEvent,
-    build_run_context,
-    run_plan, #TODO(idrees): fix the variable naming as per project naming conventions
+from kammat.defaults.constants import (
+    LOGGER_FORMAT, CACHE_SETTINGS_PATH, PathPointer
 )
-from kammat.main.planning import PlanSelection, build_plan
+from kammat.main.configure import (
+    load_config, validate_config, Config
+)
+from kammat.model.utils import (
+    get_matsim_version, get_matsim_runnable_class
+)
 
 
-PathLike = Union[str, Path]
+def create_directory(
+        p: Union[str, Path]
+) -> bool:
+    try:
+        Path(p).mkdir(parents=True, exist_ok=True)
+        return True
+    except Exception:
+        return False
 
 
-def _present_issue(issue: object) -> None:
-    code = getattr(issue, "code", "KAM-ERROR")
-    field = getattr(issue, "field", "run")
-    message = getattr(issue, "message", str(issue))
-    print("{0} {1}: {2}".format(code, field, message), file=sys.stderr)
+def report(
+        filepath: Union[str, Path],
+        content: Any,
+        mode: str = 'a'
+) -> bool:
+    pp = Path(filepath)
+    success = create_directory(pp.parent)
+    if not success:
+        logging.warning(f"Parent directory couldn't be created for [{pp}]")
+        return False
+    with pp.open(mode=mode, encoding='utf-8') as f:
+        try:
+            f.write(content)
+            return True
+        except Exception:
+            return False
 
 
-def _present_event(event: RunEvent) -> None:
-    if event.kind == "stage-output":
-        print(event.line)
-    elif event.kind in {"preflight-failed", "stage-failed", "stage-cancelled"}:
-        print(
-            "{0}: {1}".format(event.stage, event.message or event.kind),
-            file=sys.stderr,
+def run_command(
+        command: str,
+        stage: str,
+        save_log: str = None
+):
+    report(CACHE_SETTINGS_PATH + '/current_stage', content=stage)
+    proc = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    print(command)
+    output, error = proc.communicate()
+    if save_log:
+        with open(CACHE_SETTINGS_PATH + '/log.txt', 'w') as f:
+            for line in iter(proc.stdout.readline, b''):
+                print(line.rstrip())
+                f.write(str(line))
+        proc.stdout.close()
+    report(CACHE_SETTINGS_PATH + '/last_stage', content=stage)
+    if proc.returncode != 0:
+        report(CACHE_SETTINGS_PATH + '/current_stage', content='failed')
+        raise RuntimeError(
+            f"{stage} stage returned error code {proc.returncode}: {error}"
         )
+
+
+def run_network(
+        config: Config
+):
+    config_n = {
+        k: v for k, v in config['network'].items()
+        if k not in ['existing', 'nettype']
+    }
+    if config['network']['nettype'] == 'ceda':
+        script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/network/ceda.py'
+    elif config['network']['nettype'] == 'generic':
+        script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/network/generic.py'
+    command = prepare_command(config_n, script_path)
+    run_command(command=command, stage='network')
+
+
+def run_pt(
+        config: Config
+):
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/network/pt.py'
+    command = prepare_command(config['pt'], script_path)
+    run_command(command=command, stage='pt')
+
+
+def prepare_command(
+        config: Config,
+        script_path: Union[str, Path],
+        interpreter_path: str = sys.executable
+) -> str:
+    commands_list = []
+    for k, v in config.items():
+        if k == 'launch':
+            continue
+        if v is None:
+            continue
+        elif isinstance(v, bool):
+            if v:
+                commands_list.append(f'--{k.replace("_", "-")}')
+        elif isinstance(v, (int, float)):
+            commands_list.append(f'--{k.replace("_", "-")} {v}')
+        else:
+            commands_list.append(f'--{k.replace("_", "-")} "{v}"')
+    command = f'{interpreter_path} "{script_path}" ' + ' '.join(commands_list)
+    return command
+
+
+def run_population(
+        config: Dict[str, Dict[str, Union[str, int, float]]]
+):
+    config_p = {
+        k: v for k, v in config['population'].items()
+        if k not in ['existing'] and v is not None and
+        (True if isinstance(v, bool) and not v else True)
+    }
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/population/load.py'
+    command = prepare_command(config_p, script_path)
+    run_command(command=command, stage='population')
+
+
+def run_config(
+        config: Dict[str, Dict[str, Union[str, int, float]]]
+):
+    """
+    Send command to handle config preparation.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'model/config.py'
+    command = prepare_command(config['config'], script_path)
+    run_command(command=command, stage='config')
+
+
+def run_model(
+        config: Dict[str, Dict[str, Union[str, int, float]]]
+):
+    """
+    Send command to handle model run.
+    """
+    if 'custom_class' in config['model'] and config['model']['custom_class']:
+        cl = config['model']['custom_class']
+    else:
+        ver = get_matsim_version(
+            matsim_executable=config["model"]["executable_path"]
+        )
+        cl = get_matsim_runnable_class(matsim_version=ver)  # class to run
+    command = (
+        f'java -cp "{config["model"]["executable_path"]}" '
+        f'-Xmx{config["model"]["ram_limit"]} '
+        f'{cl} "{config["model"]["config_path"]}"'
+    )
+    run_command(command=command, stage='model')
+
+
+def run_analysis(
+        config: Dict[str, Dict[str, Union[str, int, float]]]
+):
+    """
+    Send command to handle analyses.
+    """
+    config_a = {
+        k: v for k, v in config['analysis'].items() if k not in ['launch']
+    }
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/analysis.py'
+    command = prepare_command(config_a, script_path)
+    run_command(command=command, stage='analysis')
+
+
+def run_comparison(
+        config: Dict[str, Dict[str, Union[str, int, float]]]
+):
+    """
+    Send command to handle comparison.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/comparison.py'
+    config_c = {
+        k: v for k, v in config['comparison'].items() if k not in ['launch']
+    }
+    command = prepare_command(config_c, script_path)
+    run_command(command=command, stage='comparison')
+
+
+def run_gis(
+        config: Dict[str, Dict[str, Union[str, int, float]]]
+):
+    """
+    Send command to handle GIS visualization.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/gis/qgis_project.py'
+    params = ' '.join([
+        f'--{k.replace("_", "-")} "{v}"'
+        for k, v in config['gis'].items()
+        if k not in ['launch', 'qgis_path']
+    ])
+    if sys.platform.lower() == 'linux':
+        command = (
+            'export PYTHONPATH="$PYTHONPATH:/usr/share/qgis/python/plugins:/usr/share/qgis/python"; '
+            f'python3 "{script_path}" ' + params
+        )
+    else:
+        command = f'"{config["gis"]["qgis_path"]}" "{script_path}" ' + params
+    run_command(command=command, stage='gis')
 
 
 def main(
-    config_path: PathLike,
-    *,
-    emit=None,
-    runner: Optional[PipelineRunner] = None,
-    environment: Optional[ExecutionEnvironment] = None,
-) -> int:
-    """Load, plan, and execute one configuration with stable exit codes."""
-
-    try:
-        loaded = load_run_config(config_path)
-    except ConfigurationError as error:
-        for issue in error.issues:
-            _present_issue(issue)
-        return 3
-    except Exception as error:
-        print(
-            "KAM-EXEC-E101 run: unexpected configuration service failure ({0})".format(
-                type(error).__name__
-            ),
-            file=sys.stderr,
-        )
-        return 5
-    if loaded.config is None or has_errors(loaded.issues):
-        for issue in loaded.issues:
-            if issue.level == "error":
-                _present_issue(issue)
-        return 3
-    try:
-        planned = build_plan(loaded.config, PlanSelection())
-    except ConfigurationError as error:
-        for issue in error.issues:
-            _present_issue(issue)
-        return 3
-    except Exception as error:
-        print(
-            "KAM-EXEC-E101 run: unexpected planning service failure ({0})".format(
-                type(error).__name__
-            ),
-            file=sys.stderr,
-        )
-        return 5
-    if planned.plan is None:
-        for issue in planned.issues:
-            _present_issue(issue)
-        return 4
-    for warning in planned.issues:
-        if warning.level == "warning":
-            _present_issue(warning)
-    sink = emit or _present_event
-    context = build_run_context(loaded.config.workspace, sink)
-    try:
-        result = run_plan(
-            planned.plan,
-            context,
-            environment=environment,
-            runner=runner,
-        )
-    except KeyboardInterrupt:
-        return 130
-    except Exception as error:
-        print(
-            "KAM-EXEC-E101 run: unexpected executor failure ({0})".format(
-                type(error).__name__
-            ),
-            file=sys.stderr,
-        )
-        return 5
-    return result.exit_code
+        config_path: Union[str, Path]
+):
+    functions = {
+        "network": run_network,
+        "pt": run_pt,
+        "population": run_population,
+        "config": run_config,
+        "model": run_model,
+        "analysis": run_analysis,
+        "comparison": run_comparison,
+        "gis": run_gis
+    }
+    config = load_config(p=config_path)
+    stages = validate_config(config=config)
+    print(f"Stages to run: {stages}")
+    for stage in stages:
+        functions[stage](config)  # run corresponding function
 
 
-def parse_args(args_list: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(
+        args_list: Optional[List[str]] = None
+) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-c",
-        "--config-path",
-        required=True,
-        help="JSON configuration file for the framework",
+        '-c', '--config-path', required=True,
+        help='JSON configuration file for the framework'
     )
-    return parser.parse_args(sys.argv[1:] if args_list is None else args_list)
+    if args_list is None:
+        return parser.parse_args(sys.argv[1:])
+    return parser.parse_args(args_list)
 
 
-__all__ = ["main", "parse_args"]
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
+    create_directory(CACHE_SETTINGS_PATH)
+    logging.basicConfig(
+        format=LOGGER_FORMAT,
+        level=logging.INFO,
+        filename=CACHE_SETTINGS_PATH + '/log_main.txt',
+        filemode='w'
+    )
     args = parse_args()
-    raise SystemExit(main(config_path=args.config_path))
+    main(
+        config_path=args.config_path
+    )
