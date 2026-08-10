@@ -4,52 +4,40 @@ Created on Mon Feb 27 11:03:48 2023
 
 @author: dgrishchuk
 """
+import os
+import re
+import sys
+import json
 import logging
+import inspect
 import textwrap
+import traceback
+import threading
 import webbrowser
 from pathlib import Path
 from datetime import datetime as dt
-from typing import List, Optional
+from typing import List, Dict, Union, Any, Tuple, Optional, Callable
 
+from kammat.model.utils import get_matsim_version, get_matsim_runnable_class
 from kammat import __version__ as version
 from kammat.model.utils import suggest_matsim_ram_limit
 from kammat.gui.utils import (
-    save_settings, restore_settings, control_disabled,
+    save_settings, restore_settings, run_subprocess, control_disabled,
     dump_log, format_large_number
 )
 from kammat.defaults.constants import (
-    LOGGER_FORMAT, CACHE_SETTINGS_PATH
+    LOGGER_FORMAT, CACHE_SETTINGS_PATH, PathPointer
 )
+from kammat.input.network.generic import prepare_generic_network
+from kammat.input.network.ceda import prepare_ceda_network
+from kammat.input.population.load import handle_population
 from kammat.model.run import get_matsim_progress_from_config
-from kammat.main.configure import (
-    has_errors,
-)
-from kammat.gui.run_adapter import (
-    PIPELINE_DONE_KEY,
-    PIPELINE_EVENT_KEY,
-    gui_tool_argv,
-    launch_gui_tool,
-    persist_main_gui_plan,
-    prepare_main_gui_plan,
-    run_gui_plan,
-)
-from kammat.gui.run_model import (
-    GuiRunCompletion,
-    GuiRunController,
-    GuiRunEventEnvelope,
-    gui_issue,
-)
-from kammat.gui.run_present import (
-    apply_run_update,
-    issue_update,
-    issues_update,
-)
-from kammat.gui.tk_compat import ensure_pysimplegui_tcl_compat
 
 import PySimpleGUI as sg
 
 sg.theme('default1')
 
+INTERPRETER = f'"{sys.executable}"'
 APP_NAME = 'main'
 GIT_LINK = 'https://github.com/leonefamily/kammat'
 BOLD_FONT = (' '.join(str(t) for t in sg.DEFAULT_FONT) + ' bold')
@@ -57,6 +45,8 @@ SUGG_RAM_LIMIT = int(suggest_matsim_ram_limit().replace('m', ''))
 MAX_RAM_LIMIT = int(
     suggest_matsim_ram_limit(max_fraction=1, min_free_ram=0).replace('m', '')
 )
+OPERATIONS_ORDER = ['network', 'pt', 'population', 'config',
+                    'model', 'analysis', 'comparison', 'gis']
 USENET_KEYS = ['-ENETPATH-', '-ENET-', '-ELDEFPATH-', '-ELDEF-',
                '-ESCHEDPATH-', '-ESCHED-', '-EVEHSPATH-', '-EVEHS-']
 USEPOP_KEYS = ['-EPOPPATH-', '-EPOP-']
@@ -82,10 +72,35 @@ def get_layout_keys(
     return keys
 
 
+def serialize_helper(
+        val: Any
+):
+    if isinstance(val, Path):
+        return str(val)
+    raise TypeError(
+        f'Object of type {type(val)} is not JSON serializable'
+    )
+
+
+def dump_run_settings(
+        values: Dict[str, Union[str, int, float]],
+        path: Union[str, Path]
+):
+    with open(path, mode='w', encoding='utf-8') as f:
+        json.dump(values, f, indent=4, default=serialize_helper)
+
+
+def load_run_settings(
+        path: Union[str, Path]
+) -> Dict[str, Dict[str, Union[str, int, float]]]:
+    with open(path, mode='r', encoding='utf-8') as f:
+        lvalues = json.load(f)
+    return lvalues
+
+
 def about_popup(
         window: sg.Window
 ):
-    ensure_pysimplegui_tcl_compat(sg)
     alayout = [
         [sg.Text('MATSim Model Data Management System')],
         [sg.Text(f'Version: {version}')],
@@ -446,39 +461,610 @@ def get_full_layout(
     return layout
 
 
-def _start_gui_tool(window: sg.Window, filename: str):
-    argv = gui_tool_argv(Path(__file__).resolve().parent / filename)
-    return window.start_thread(lambda: launch_gui_tool(argv), '-EXTERNAL-')
+def check_validity(
+        window: sg.Window,
+        values: Dict[str, Union[str, int, float]]
+) -> Tuple[Dict[str, Dict[str, Union[str, int, float]]], Dict[str, List[str]]]:
+    msgs = {
+        'info': [],
+        'warning': [],
+        'error': []
+    }
+
+    vvs = {  # valid values
+        'wd': {},
+        'network': {},
+        'pt': {},
+        'population': {},
+        'config': {},
+        'model': {},
+        'analysis': {},
+        'comparison': {},
+        'gis': {}
+    }
+
+    # Working directories
+    wd = Path(values['-PARENTPATH-']).resolve() / window['-WDPATH-'].get()
+    vvs['wd']['root'] = wd
+    wd_net = wd / 'network'
+    wd.mkdir(exist_ok=True)
+    wd_net.mkdir(exist_ok=True)
+
+    wd_population = wd / 'population'
+    vvs['wd']['model'] = wd_population
+    wd_population.mkdir(exist_ok=True)
+
+    run_dir = wd / 'model'
+    vvs['wd']['model'] = run_dir
+    run_dir.mkdir(exist_ok=True)
+
+    an_dir = wd / 'analysis'
+    vvs['wd']['analysis'] = an_dir
+    an_dir.mkdir(exist_ok=True)
+
+    rd_dir = an_dir / 'nodes'  # ribbon diagrams
+    vvs['wd']['nodes'] = rd_dir
+    rd_dir.mkdir(exist_ok=True)
+
+    lnk_dir = an_dir / 'links'  # link diagrams
+    rl_dir = lnk_dir / 'road'
+    ptl_dir = lnk_dir / 'pt'
+    vvs['wd']['links'] = lnk_dir
+    vvs['wd']['road_links'] = rl_dir
+    vvs['wd']['pt_links'] = ptl_dir
+    lnk_dir.mkdir(exist_ok=True)
+    rl_dir.mkdir(exist_ok=True)
+    ptl_dir.mkdir(exist_ok=True)
+
+    comp_dir = wd / 'comparison'
+    vvs['wd']['comparison'] = comp_dir
+    comp_dir.mkdir(exist_ok=True)
+
+    # Network
+    net_keys = set(
+        inspect.getargs(prepare_generic_network.__code__).args +
+        inspect.getargs(prepare_ceda_network.__code__).args
+    )
+    if values['-USENET-']:
+        enet = Path(values['-ENETPATH-'])
+        try:
+            nvvs = load_run_settings(enet.parent.parent / 'settings.json')
+            # TODO: check correctness
+            for key, value in nvvs['network'].items():
+                vvs['network'][key] = value
+            msgs['info'].append('Using existing network')
+        except FileNotFoundError:
+            msgs['warning'].append(
+                'Using existing network, but the structure of files does not '
+                'seem to correspond with this framework. Continuing anyways, '
+                'but some analyses will not be possible - e.g. merging with '
+                'original shapefile, intensities comparison etc.'
+            )
+            for key in net_keys:
+                vvs['network'][key] = None
+        vvs['network']['net_save_path'] = enet
+        vvs['network']['lane_definitions_save_path'] = values['-ELDEFPATH-']
+        vvs['network']['existing'] = True
+        vvs['network']['launch'] = False
+    else:
+        vvs['network']['shp_path'] = Path(values['-NETPATH-'])
+        vvs['network']['nettype'] = 'generic' if values['-NETGEN-'] else 'ceda'
+        if vvs['network']['nettype'] == 'generic':
+            vvs['network']['restrict_uturns'] = values['-UTURNS-']
+        elif vvs['network']['nettype'] == 'ceda':
+            vvs['network']['ncores'] = int(values['-THREADS-'])
+            if values['-LCONPATH-']:
+                vvs['network']['lane_connections_path'] = values['-LCONPATH-']
+                vvs['network']['lane_definitions_save_path'] = wd_net / 'lane_definitions.xml'
+            else:
+                vvs['network']['lane_connections_path'] = None
+                vvs['network']['lane_definitions_save_path'] = None
+            vvs['network']['internal_maneuvers'] = values['-SIMPLEINT-']
+        vvs['network']['edges_save_path'] = wd_net / 'edges.shp'
+        vvs['network']['nodes_save_path'] = wd_net / 'nodes.shp'
+        vvs['network']['net_save_path'] = wd_net / 'net.xml'
+
+        vvs['network']['existing'] = False
+        vvs['network']['launch'] = True
+
+    # Public transport, schedules, vehicles
+    if values['-GTFSPATH-'] and not values['-USENET-']:
+        vvs['pt']['gtfs_folder'] = values['-GTFSPATH-']
+        vvs['pt']['output_schedule_path'] = wd_net / 'schedule.xml'
+        vvs['pt']['output_vehicles_path'] = wd_net / 'vehicles.xml'
+    else:
+        msgs['info'].append('Using existing schedule and vehicles')
+        vvs['pt']['gtfs_folder'] = None
+        if values['-USENET-']:
+            vvs['pt']['output_schedule_path'] = values['-ESCHEDPATH-']
+            vvs['pt']['output_vehicles_path'] = values['-EVEHSPATH-']
+        else:
+            vvs['pt']['output_schedule_path'] = None
+            vvs['pt']['output_vehicles_path'] = None
+    vvs['pt']['number_of_threads'] = int(values['-THREADS-'])
+    vvs['pt']['net_path'] = vvs['network']['net_save_path']
+    vvs['pt']['output_net_path'] = vvs['network']['net_save_path']
+
+    # Population
+    pop_keys = inspect.getargs(handle_population.__code__).args
+    if values['-USEPOP-']:
+        epop = Path(values['-EPOPPATH-'])
+        try:
+            pvvs = load_run_settings(epop.parent.parent / 'settings.json')
+            for key, value in pvvs['population'].items():
+                vvs['population'][key] = value
+            msgs['info'].append('Using existing population')
+        except FileNotFoundError:
+            msgs['warning'].append(
+                'Using existing population, but the structure of files does not '
+                'seem to correspond with this framework. Continuing anyways, '
+                'but some analyses will not be possible - e.g. merging with '
+                'original shapefile, intensities comparison etc.'
+            )
+            for key in pop_keys:
+                vvs['population'][key] = None
+        vvs['population']['xml_path'] = epop
+        vvs['population']['existing'] = True
+        vvs['population']['launch'] = False
+    else:
+        vvs['population']['launch'] = True
+        vvs['population']['existing'] = False
+        vvs['population']['include_teleported'] = values['-WRITETP-']
+        vvs['population']['xml_path'] = wd_population / 'population.xml.gz'
+        vvs['population']['csv_path'] = None # wd_population / 'population.csv'
+        vvs['population']['pickle_path'] = wd_population / 'population.zx'
+        vvs['population']['facilities_path'] = values['-POPPATH-']
+        vvs['population']['categories_path'] = values['-CATPATH-']
+        vvs['population']['diaries_path'] = values['-DIARPATH-']
+        vvs['population']['distances_path'] = values['-DISTPATH-']
+        vvs['population']['clusters_path'] = values['-CLUSTPATH-']
+        vvs['population']['citylog_points_path'] = values['-CLOGSPATH-']
+        vvs['population']['freight_points_path'] = values['-FREPATH-']
+        vvs['population']['transit_points_path'] = values['-TRANPATH-']
+        vvs['population']['staying_path'] = values['-STAYPATH-']
+        vvs['population']['target_probabilities_path'] = values['-TARGPATH-']
+        vvs['population']['time_courses_path'] = values['-TCOURPATH-']
+        vvs['population']['city_logistics_path'] = values['-CLOGPATH-']
+        vvs['population']['times_path'] = values['-TIMEPATH-']
+        vvs['population']['modal_split_path'] = values['-MSPATH-']
+        vvs['population']['indices_path'] = values['-INDPATH-']
+        vvs['population']['relations_path'] = values['-RELPATH-']
+        vvs['population']['stops_path'] = values['-STOPPATH-']
+        vvs['population']['oneway_flows_path'] = values['-OFLOWPATH-']
+        vvs['population']['sample'] = values['-POPFRAC-']
+        vvs['population']['incremental_capacity_allocation_parts'] = int(values['-INCRCAP-'])
+        vvs['population']['modal_split_save_path'] = wd_population / 'modal_split.csv'
+        vvs['population']['facilities_counts_save_path'] = wd_population / 'facilities_counts.shp'
+        vvs['population']['relational_matrices_save_directory'] = wd_population / 'relations'
+    vvs['population']['ncores'] = int(values['-THREADS-'])
+
+    if 'oneway_flows_path' in vvs['population'] and vvs['population']['oneway_flows_path']:
+        vvs['population']['freight_points_path'] = None
+        vvs['population']['transit_points_path'] = None
+
+    if (('freight_points_path' in vvs['population'] and vvs['population']['freight_points_path'])
+        or ('transit_points_path' in vvs['population'] and vvs['population']['transit_points_path'])):
+        vvs['population']['oneway_flows_path'] = None
+
+    # Configuration
+    vvs['config']['net_path'] = vvs['network']['net_save_path']
+    vvs['config']['population_path'] = vvs['population']['xml_path']
+    vvs['config']['number_of_threads'] = int(values['-THREADS-'])
+    vvs['config']['last_iteration'] = int(values['-ITERS-'] - 1)
+    vvs['config']['output_config_path'] = wd / 'config.xml'
+    vvs['config']['matsim_output_directory'] = run_dir
+    vvs['config']['schedule_path'] = vvs['pt']['output_schedule_path']
+    vvs['config']['vehicles_path'] = vvs['pt']['output_vehicles_path']
+    vvs['config']['lane_definitions_path'] = (
+        vvs['network']['lane_definitions_save_path']
+        if 'lane_definitions_save_path' in vvs['network'] else None
+    )
+    vvs['config']['write_events_interval'] = vvs['config']['last_iteration']
+    vvs['config']['disable_innovations_after_fraction'] = values['-MUTFRAC-']
+    vvs['config']['mutation_range'] = values['-TIMEMUT-'] * 60
+    vvs['config']['scoring_parameters_path'] = (
+        values['-SCPARSPATH-'] if values['-SCPARSPATH-'].strip() != '' else
+        None
+    )
+    vvs['config']['minibus_parameters_path'] = (
+        values['-PPARSPATH-'] if values['-PPARSPATH-'].strip() != '' else
+        None
+    )
+    vvs['config']['launch'] = True
+
+    # Model
+    vvs['model']['launch'] = values['-RUNMOD-']
+    vvs['model']['executable_path'] = values['-MATSIMPATH-']
+    vvs['model']['config_path'] = vvs['config']['output_config_path']
+    vvs['model']['ram_limit'] = f"{int(values['-MATSIMRAM-'])}m"
+    vvs['model']['custom_class'] = (
+        values['-CCLASS-'] if values['-CCLASS-'].strip() != '' else
+        None
+    )
+
+    # Analysis
+    vvs['analysis']['launch'] = values['-ANALYZE-'] if values['-RUNMOD-'] else False
+    vvs['analysis']['events_path'] = vvs['config']['matsim_output_directory'] / 'output_events.xml.gz'
+    vvs['analysis']['net_path'] = vvs['config']['matsim_output_directory'] / 'output_network.xml.gz'
+    vvs['analysis']['legs_path'] = vvs['config']['matsim_output_directory'] / 'output_legs.csv.gz'
+    vvs['analysis']['output_transfers_path'] = an_dir / 'transfers.csv.gz'
+    vvs['analysis']['output_counts_path'] = an_dir / 'counts.json.gz'
+    vvs['analysis']['output_turns_path'] = an_dir / 'turns.json.gz'
+    vvs['analysis']['output_net_counts_path'] = an_dir / 'counts.shp'
+    vvs['analysis']['schedule_path'] = run_dir / 'output_transitSchedule.xml.gz'
+    vvs['analysis']['output_pt_counts_path'] = an_dir / 'pt.json.gz'
+    vvs['analysis']['output_pt_net_counts_path'] = an_dir / 'pt.shp'
+    vvs['analysis']['output_pt_stops_counts_path'] = an_dir / 'pt_stops.shp'
+    vvs['analysis']['links_nodes_groups'] = values['-LINKGROUPS-'] if values['-LINKGROUPS-'] else None
+    vvs['analysis']['output_ribbon_diagrams_directory'] = rd_dir
+    vvs['analysis']['road_links_ids'] = values['-LINKINTENS-'] if values['-LINKINTENS-'] else None
+    vvs['analysis']['output_road_links_intensities_directory'] = rl_dir
+    vvs['analysis']['pt_links_ids'] = values['-PTLINKINTENS-'] if values['-PTLINKINTENS-'] else None
+    vvs['analysis']['output_pt_links_intensities_directory'] = ptl_dir
+    vvs['analysis']['output_pt_lines_intensities_directory'] = ptl_dir
+    vvs['analysis']['pt_lines_ids'] = values['-PTLINEINTENS-'] if values['-LINKGROUPS-'] else None
+    vvs['analysis']['cordon_poly_path'] = values['-CORDPOLYPATH-'] if values['-CORDPOLYPATH-'] else None
+    vvs['analysis']['output_cordon_stats_path'] = an_dir / 'cordons_stats.shp'
+    vvs['analysis']['volume_poly_path'] = values['-VOLPOLYPATH-'] if values['-VOLPOLYPATH-'] else None
+    vvs['analysis']['output_volume_stats_path'] = an_dir / 'volume_stats.shp'
+
+    vvs['analysis']['output_road_db_path'] = an_dir / 'road.db' if values['-EVENTSDB-'] else None
+    vvs['analysis']['output_road_db_flush_interval'] = int(values['-DBFLUSH-'])
+
+    # Comparison
+    vvs['comparison']['launch'] = values['-COMPARE-'] if values['-ANALYZE-'] else False
+    vvs['comparison']['orig_net_path'] = vvs['network']['shp_path']
+    vvs['comparison']['edge_net_path'] = vvs['network']['edges_save_path']
+    vvs['comparison']['net_counts_path'] = vvs['analysis']['output_net_counts_path']
+    vvs['comparison']['network_intensities_path'] = values['-NINTPATH-'] if values['-NINTPATH-'] else None
+    vvs['comparison']['network_differences_save_path'] = comp_dir / 'network_differences.shp'
+    vvs['comparison']['network_differences_stats_save_path'] = comp_dir / 'network_differences.csv'
+    vvs['comparison']['intersection_intensities_path'] = values['-IINTPATH-'] if values['-IINTPATH-'] else None
+    vvs['comparison']['intersection_differences_save_path'] = comp_dir / 'intersection_differences.shp'
+    vvs['comparison']['intersection_differences_stats_save_path'] = comp_dir / 'intersection_differences.csv'
+    vvs['comparison']['difference_thresh'] = 0.25
+    vvs['comparison']['diff_net_counts_save_path'] = comp_dir / 'prev_model_network_differences.shp'
+    vvs['comparison']['diff_pt_net_counts_save_path'] = comp_dir / 'prev_model_pt_network_differences.shp'
+    vvs['comparison']['diff_pt_stops_counts_save_path'] = comp_dir / 'prev_model_pt_stops_differences.shp'
+    pmod = Path(values['-PMODPATH-'])
+    try:
+        cvvs = load_run_settings(pmod / 'settings.json')
+        vvs['comparison']['prev_net_counts_path'] = cvvs['analysis']['output_net_counts_path']
+        vvs['comparison']['prev_pt_net_counts_path'] = cvvs['analysis']['output_pt_net_counts_path']
+        vvs['comparison']['prev_pt_stops_counts_path'] = cvvs['analysis']['output_pt_stops_counts_path']
+        vvs['comparison']['pt_net_counts_path'] = vvs['analysis']['output_pt_net_counts_path']
+        vvs['comparison']['pt_stops_counts_path'] = vvs['analysis']['output_pt_stops_counts_path']
+    except FileNotFoundError:
+        msgs['warning'].append(
+            'Using existing population, but the structure of files does not '
+            'seem to correspond with this framework. Continuing anyways, '
+            'but some analyses will not be possible - e.g. merging with '
+            'original shapefile, intensities comparison etc.'
+        )
+        vvs['comparison']['prev_net_counts_path'] = None
+        vvs['comparison']['prev_pt_net_counts_path'] = None
+        vvs['comparison']['prev_pt_stops_counts_path'] = None
+    vvs['comparison']['pt_net_counts_path'] = vvs['analysis']['output_pt_net_counts_path']
+    vvs['comparison']['pt_stops_counts_path'] = vvs['analysis']['output_pt_stops_counts_path']
+
+    # GIS project
+    vvs['gis']['launch'] = values['-QGIS-']
+    vvs['gis']['qgis_path'] = values['-QGISPATH-']
+    vvs['gis']['project_path'] = wd / 'view.qgs'
+    vvs['gis']['input_facilities'] = vvs['population']['facilities_counts_save_path']
+    vvs['gis']['input_edges'] = vvs['network']['edges_save_path']
+    vvs['gis']['input_nodes'] = vvs['network']['nodes_save_path']
+    vvs['gis']['output_road_counts'] = vvs['analysis']['output_net_counts_path']
+    vvs['gis']['output_pt_counts'] = vvs['analysis']['output_pt_net_counts_path']
+    vvs['gis']['output_pt_stops'] = vvs['analysis']['output_pt_stops_counts_path']
+    vvs['gis']['output_cordons_stats'] = vvs['analysis']['output_cordon_stats_path']
+    vvs['gis']['output_volumes_stats'] = vvs['analysis']['output_volume_stats_path']
+    vvs['gis']['comparison_rw_road_diffs'] = vvs['comparison']['network_differences_save_path']
+    vvs['gis']['comparison_rw_road_intersection_diffs'] = vvs['comparison']['intersection_differences_save_path']
+    vvs['gis']['comparison_model_road_diffs'] = vvs['comparison']['diff_net_counts_save_path']
+    vvs['gis']['comparison_model_pt_diffs'] = vvs['comparison']['diff_pt_net_counts_save_path']
+    vvs['gis']['comparison_model_pt_stops_diffs'] = vvs['comparison']['diff_pt_stops_counts_save_path']
+    return vvs, msgs
 
 
-def run_ribbon_diagrams(window: sg.Window):
-    return _start_gui_tool(window, 'ribbon_diagrams.py')
+def run_network(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle network preparation.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    vvs_n = {k: v for k, v in vvs['network'].items() if k not in ['existing', 'nettype']}
+    if vvs['network']['nettype'] == 'ceda':
+        script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/network/ceda.py'
+    elif vvs['network']['nettype'] == 'generic':
+        script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/network/generic.py'
+    command = prepare_command(vvs_n, script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command),
+        '-NETWORK_THREAD-'
+    )
+    return t
 
 
-def run_vehicle_counts(window: sg.Window):
-    return _start_gui_tool(window, 'vehicle_counts.py')
+def run_pt(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle pt preparation.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/network/pt.py'
+    command = prepare_command(vvs['pt'], script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(lambda: run_subprocess(command), '-PT_THREAD-')
+    return t
 
 
-def run_pt_counts(window: sg.Window):
-    return _start_gui_tool(window, 'pt_counts.py')
+def prepare_command(
+        vvs_x: Dict[str, Union[str, int, float]],
+        script_path: Union[str, Path],
+        interpreter_path: str = INTERPRETER
+) -> str:
+    commands_list = []
+    for k, v in vvs_x.items():
+        if k == 'launch':
+            continue
+        if v is None:
+            continue
+        elif isinstance(v, bool):
+            if v:
+                commands_list.append(f'--{k.replace("_", "-")}')
+        elif isinstance(v, (int, float)):
+            commands_list.append(f'--{k.replace("_", "-")} {v}')
+        else:
+            if isinstance(v, str):
+                if not v.strip():
+                    continue
+            commands_list.append(f'--{k.replace("_", "-")} "{v}"')
+    command = f'{interpreter_path} "{script_path}" ' + ' '.join(commands_list)
+    return command
 
 
-def run_decay_diagrams(window: sg.Window):
-    return _start_gui_tool(window, 'decay_diagrams.py')
+def run_population(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle population preparation.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    vvs_p = {
+        k: v for k, v in vvs['population'].items()
+        if k not in ['existing'] and v is not None and
+        (True if isinstance(v, bool) and not v else True)
+    }
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'input/population/load.py'
+    command = prepare_command(vvs_p, script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-POPULATION_THREAD-'
+    )
+    return t
 
 
-def run_results(window: sg.Window):
-    return _start_gui_tool(window, 'results.py')
+def run_config(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle config preparation.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'model/config.py'
+    command = prepare_command(vvs['config'], script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-CONFIG_THREAD-'
+    )
+    return t
+
+
+def run_model(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle model run.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    if 'custom_class' in vvs['model'] and vvs['model']['custom_class']:
+        cl = vvs['model']['custom_class']
+    else:
+        ver = get_matsim_version(
+            matsim_executable=vvs["model"]["executable_path"]
+        )
+        cl = get_matsim_runnable_class(matsim_version=ver)  # class to run
+    command = (
+        f'java -cp "{vvs["model"]["executable_path"]}" '
+        f'-Xmx{vvs["model"]["ram_limit"]} '
+        f'{cl} "{vvs["model"]["config_path"]}"'
+    )
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-MODEL_THREAD-'
+    )
+    return t
+
+
+def run_analysis(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle analyses.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    vvs_a = {
+        k: v for k, v in vvs['analysis'].items() if k not in ['launch']
+    }
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/analysis.py'
+    command = prepare_command(vvs_a, script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-ANALYSIS_THREAD-'
+    )
+    return t
+
+
+def run_comparison(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle comparison.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/comparison.py'
+    vvs_c = {
+        k: v for k, v in vvs['comparison'].items() if k not in ['launch']
+    }
+    command = prepare_command(vvs_c, script_path)
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-COMPARISON_THREAD-'
+    )
+    return t
+
+
+def run_gis(
+        window: sg.Window = None,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]] = None,
+        gui: bool = True
+) -> Union[threading.Thread, int]:
+    """
+    Send command to handle GIS visualization.
+
+    If `gui` is True, returns Thread object.
+    Otherwise, runs prepared command in a
+    subprocess and returns its exit code.
+    """
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'output/gis/qgis_project.py'
+    params = ' '.join([
+        f'--{k.replace("_", "-")} "{v}"'
+        for k, v in vvs['gis'].items()
+        if k not in ['launch', 'qgis_path']
+    ])
+    if sys.platform.lower() == 'linux':
+        command = (
+            'export PYTHONPATH="$PYTHONPATH:/usr/share/qgis/python/plugins:/usr/share/qgis/python"; '
+            f'python3 "{script_path}" ' + params
+        )
+    else:
+        command = f'"{vvs["gis"]["qgis_path"]}" "{script_path}" ' + params
+    if not gui:
+        return run_subprocess(command)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-GIS_THREAD-'
+    )
+    return t
+
+
+def run_ribbon_diagrams(
+        window: sg.Window
+) -> threading.Thread:
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'gui/ribbon_diagrams.py'
+    command = prepare_command({}, script_path)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-EXTERNAL-'
+    )
+    return t
+
+
+def run_vehicle_counts(
+        window: sg.Window
+) -> threading.Thread:
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'gui/vehicle_counts.py'
+    command = prepare_command({}, script_path)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-EXTERNAL-'
+    )
+    return t
+
+
+def run_pt_counts(
+        window: sg.Window
+) -> threading.Thread:
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'gui/pt_counts.py'
+    command = prepare_command({}, script_path)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-EXTERNAL-'
+    )
+    return t
+
+
+def run_decay_diagrams(
+        window: sg.Window
+) -> threading.Thread:
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'gui/decay_diagrams.py'
+    command = prepare_command({}, script_path)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-EXTERNAL-'
+    )
+    return t
+
+
+def run_results(
+        window: sg.Window
+) -> threading.Thread:
+    script_path = Path(inspect.getfile(PathPointer)).parent.parent / 'gui/results.py'
+    command = prepare_command({}, script_path)
+    t = window.start_thread(
+        lambda: run_subprocess(command), '-EXTERNAL-'
+    )
+    return t
 
 
 def update_progress(
         window: sg.Window,
-        config=None,
+        vvs: Optional[Dict[str, Dict[str, Union[str, int, float]]]] = None,
         operation: Optional[str] = None
 ):
-    if config is None or operation is None:
+    if vvs is None or operation is None:
         return
-
     if operation == 'population':
         try:
             with open(
@@ -486,27 +1072,91 @@ def update_progress(
                     mode='r'
             ) as ap:
                 ccount = max(float(dig.strip()) for dig in ap.readlines())
-        except (OSError, ValueError):
-            window['-POPPROGR-'].update(current_count=0)
-            return
-        window['-POPPROGR-'].update(current_count=ccount)
-        window['-POPPROGRTS-'].update(dt.now())
-    elif operation == 'model':
-        config_path = config.stages['model']['config_path']
-        try:
-            ccount = get_matsim_progress_from_config(
-                config_path=config_path
-            )
+                window['-POPPROGR-'].update(current_count=ccount)
+                window['-POPPROGRTS-'].update(dt.now())
         except Exception:
-            return
+            window['-POPPROGR-'].update(current_count=0)
+    elif operation == 'model':
+        ccount = get_matsim_progress_from_config(
+            config_path=vvs['model']['config_path']
+        )
         window['-MODELPROGR-'].update(current_count=ccount)
         window['-MODELPROGRTS-'].update(dt.now())
+
+
+def get_stages(
+        vvs: Dict[str, Dict[str, Union[str, int, float]]]
+) -> List[str]:
+    stages = OPERATIONS_ORDER[:]
+    if vvs['network']['existing']:
+        stages.remove('network')
+    if vvs['pt']['gtfs_folder'] is None:
+        stages.remove('pt')
+    if vvs['population']['existing']:
+        stages.remove('population')
+    if not vvs['model']['launch']:
+        stages.remove('model')
+        stages.remove('analysis')
+        stages.remove('comparison')
+    if not vvs['analysis']['launch']:
+        try:
+            stages.remove('analysis')
+        except ValueError:
+            pass
+    if not vvs['comparison']['launch']:
+        try:
+            stages.remove('comparison')
+        except ValueError:
+            pass
+    if not vvs['gis']['launch']:
+        stages.remove('gis')
+    return stages
+
+
+def get_stages_order(
+        stages: List[str]
+) -> List[int]:
+    return [OPERATIONS_ORDER.index(n) for s, n in enumerate(stages)]
+
+
+def handle_nogui(
+        window: sg.Window,
+        vvs: Dict[str, Dict[str, Union[str, int, float]]],
+        stages: List[str],
+        functions: Dict[str, Callable]
+):
+    window['-CONSOLE-'].restore_stderr()
+    window['-CONSOLE-'].restore_stdout()
+    window.close()
+    to_print = []
+    for stage in stages:
+        result = functions[stage](vvs=vvs, gui=False)
+        if result != 0:
+            to_print.append(
+                f'{stage} failed with code {result} at {dt.now()}'
+            )
+            break
+        else:
+            to_print.append(
+                f'{stage} succeeded at {dt.now()}'
+            )
+    window = get_main_window(populated=True)
+    window['-MAINGROUP-'].Widget.select(1)
+    for msg in to_print:
+        sg.cprint(
+            msg,
+            text_color='green' if 'failed' not in msg else 'firebrick1'
+        )
+        if 'failed' in msg:
+            sg.cprint(
+                traceback.format_exc()
+            )
+    return window
 
 
 def get_main_window(
         populated: bool = True
 ) -> sg.Window:
-    ensure_pysimplegui_tcl_compat(sg)
     layout = get_full_layout()
     window = sg.Window(f'kammat {version}', layout, finalize=True)
     if populated:
@@ -523,41 +1173,36 @@ def get_main_window(
     return window
 
 
-def _apply_pipeline_updates(window, updates):
-    first_issue = None
-    for update in updates:
-        issue = apply_run_update(window, update)
-        if issue is not None:
-            if first_issue is None:
-                first_issue = issue
-            fallback = issue_update(issue)
-            try:
-                for record in fallback.console_records:
-                    window['-CONSOLE-'].print(record.text, text_color='firebrick1')
-            except Exception:
-                pass
-    return first_issue
-
-
 def main():
     """
     Info.
     """
     window = get_main_window(populated=True)
 
+    functions = {
+        "network": run_network,
+        "pt": run_pt,
+        "population": run_population,
+        "config": run_config,
+        "model": run_model,
+        "analysis": run_analysis,
+        "comparison": run_comparison,
+        "gis": run_gis
+    }
     newnum = format_large_number(window['-DBFLUSH-'].widget.get())
     window['-DBFLUSHLAB-'].update(newnum + ' rows')
 
-    controller = GuiRunController()
-    active_config = None
+    results = {}
+    is_running = False
+    operation = None
+    vvs = None
+    t = None
+    fnums = []
 
     try:
         while True:
             event, values = window.read(timeout=60000)  # update every minute
-            if event == sg.WINDOW_CLOSED:
-                if controller.active:
-                    _apply_pipeline_updates(window, (controller.request_close(),))
-                    continue
+            if event == sg.WIN_CLOSED:
                 break
             window['-INFO-'].update(value='', text_color='black')
             save_settings(window, APP_NAME)
@@ -573,127 +1218,45 @@ def main():
                 )
                 window['-WDPREV-'].set_tooltip(wd_str)
                 window.refresh()
-            if event == '-RUN-':
-                if controller.active:
-                    issue, _ = controller.begin(controller.plan, False)
-                    if issue is not None:
-                        _apply_pipeline_updates(window, (issue_update(issue),))
-                    continue
-                config, plan, issues = prepare_main_gui_plan(values)
-                _apply_pipeline_updates(window, (issues_update(issues),))
-                if config is None or plan is None or has_errors(issues):
-                    continue
-                persistence_issue = persist_main_gui_plan(
-                    config,
-                    plan,
-                    lambda path: save_settings(
-                        window, APP_NAME, path=path
-                    ),
-                )
-                if persistence_issue is not None:
-                    _apply_pipeline_updates(
-                        window, (issue_update(persistence_issue),)
-                    )
-                    continue
-                issue, update = controller.begin(plan, bool(values['-NOGUI-']))
-                if issue is not None or update is None:
-                    if issue is not None:
-                        _apply_pipeline_updates(window, (issue_update(issue),))
-                    continue
-                session = controller.session
-                if session is None:
-                    continue
-                active_config = config
-                presentation_issue = _apply_pipeline_updates(window, (update,))
-                if presentation_issue is not None:
-                    _apply_pipeline_updates(
-                        window,
-                        controller.accept_completion(GuiRunCompletion(
-                            session.identifier,
-                            0,
-                            issue=presentation_issue,
-                        )),
-                    )
-                    active_config = None
-                    continue
-                try:
-                    window.start_thread(
-                        lambda active_session=session, active_plan=plan: run_gui_plan(
-                            active_session,
-                            active_plan,
-                            window.write_event_value,
-                        ),
-                        PIPELINE_DONE_KEY,
-                    )
-                except Exception as error:
-                    completion = GuiRunCompletion(
-                        session.identifier,
-                        0,
-                        issue=gui_issue(
-                            'KAM-GUI-E103',
-                            'worker.start',
-                            'pipeline worker failed ({0})'.format(
-                                type(error).__name__
-                            ),
-                        ),
-                    )
-                    _apply_pipeline_updates(
-                        window, controller.accept_completion(completion)
-                    )
-            if event == PIPELINE_EVENT_KEY:
-                envelope = values[event]
-                if not isinstance(envelope, GuiRunEventEnvelope):
-                    envelope_issue = gui_issue(
-                        'KAM-GUI-E104',
-                        'event',
-                        'pipeline event envelope has the wrong type',
-                    )
-                    session = controller.session
-                    state = controller.state
-                    if session is not None and state is not None:
-                        _apply_pipeline_updates(
-                            window,
-                            controller.accept_completion(GuiRunCompletion(
-                                session.identifier,
-                                state.last_sequence,
-                                issue=envelope_issue,
-                            )),
-                        )
-                        active_config = None
-                    else:
-                        _apply_pipeline_updates(
-                            window, (issue_update(envelope_issue),)
-                        )
+            if event == '-RUN-' or re.search('-\S+_THREAD-', event):
+                if event == '-RUN-' and not is_running:
+                    vvs, msgs = check_validity(window, values)
+                    save_settings(window, APP_NAME, path=vvs['wd']['root'] / 'settings.sg')
+                    dump_run_settings(vvs, path=vvs['wd']['root'] / 'settings.json')
+                    for info in msgs['info']:
+                        sg.cprint(info, text_color='black')
+                    for err in msgs['error']:
+                        sg.cprint(err, text_color='firebrick1')
+                    if msgs['error']:
+                        continue
+                    stages = get_stages(vvs)
+                    if values['-NOGUI-']:
+                        window.close()
+                        window = handle_nogui(window, vvs, stages, functions)
+                        continue
+                    fnums = get_stages_order(stages)
+                    control_disabled(window, keys_list=['-RUN-', '-RESUME-'], disabled=True)
+                    window['-MAINGROUP-'].Widget.select(1)
                 else:
-                    _apply_pipeline_updates(
-                        window, controller.accept_event(envelope)
-                    )
-            if event == PIPELINE_DONE_KEY:
-                completion = values[event]
-                close_requested = bool(
-                    controller.state is not None
-                    and controller.state.close_requested
-                )
-                if not isinstance(completion, GuiRunCompletion):
-                    session = controller.session
-                    if session is not None:
-                        completion = GuiRunCompletion(
-                            session.identifier,
-                            controller.state.last_sequence,
-                            issue=gui_issue(
-                                'KAM-GUI-E103',
-                                'completion',
-                                'pipeline completion has the wrong type',
-                            ),
-                        )
-                if isinstance(completion, GuiRunCompletion):
-                    _apply_pipeline_updates(
-                        window, controller.accept_completion(completion)
-                    )
-                    if not controller.active:
-                        active_config = None
-                    if close_requested and not controller.active:
-                        return
+                    sg.cprint(f'{operation.capitalize()} finished', text_color='green')
+                    results[operation] = values[event]
+                    if values[event] != 0:
+                        fnums = []
+                        sg.cprint(f'Process {operation} returned error code {values[event]}',
+                                  text_color='firebrick1')
+                    # operation = re.sub('(-|_THREAD-)', '', event).lower()
+                if fnums:
+                    fnum = fnums.pop(0)
+                    operation = OPERATIONS_ORDER[fnum]
+                    sg.cprint(f'{operation.capitalize()} started', text_color='green')
+                    t = functions[operation](window, vvs)
+                    is_running = True
+                else:
+                    is_running = False
+                    sg.cprint('All finished', text_color='green')
+                    control_disabled(window, keys_list=['-RUN-'], disabled=False)
+                    control_disabled(window, keys_list=['-PAUSE-', '-RESUME-'], disabled=True)
+                    dump_log(window, path=vvs['wd']['root'] / 'log.txt')
             if '-LOADS-' in event:
                 filename = sg.popup_get_file(
                     message='Save window settings',
@@ -727,19 +1290,10 @@ def main():
                             value='Wrong settings path', text_color='firebrick1'
                         )
             if '-RESTS-' in event:
-                if controller.active:
-                    _apply_pipeline_updates(window, (issue_update(gui_issue(
-                        'KAM-GUI-E100',
-                        'window.reset',
-                        'window reset is unavailable while a run is active',
-                    )),))
-                    continue
                 resp = sg.popup_yes_no('Reset all settings?')
                 if resp == 'Yes':
                     window.close()
                     window = get_main_window(populated=False)
-                    controller = GuiRunController()
-                    active_config = None
             if '-ABOUT-' in event:
                 about_popup(window)
             if event == '-USEPOP-':
@@ -784,19 +1338,20 @@ def main():
                 dump_log(window, clipboard=True, selection=True)
             if '-CALL-' in event:
                 dump_log(window, clipboard=True, selection=False)
-            if controller.active and controller.state is not None:
+            if is_running:
                 update_progress(
                     window=window,
-                    config=active_config,
-                    operation=controller.state.current_stage
+                    vvs=vvs,
+                    operation=operation
                 )
             if '-DBFLUSH-' in event:
                 newnum = format_large_number(values['-DBFLUSH-'])
                 window['-DBFLUSHLAB-'].update(newnum + ' rows')
         window.close()
-    except Exception as error:
-        sg.popup_error(
-            "kammat's GUI has crashed ({0})".format(type(error).__name__)
+    except Exception:
+        import traceback
+        sg.popup_error_with_traceback(
+            "kammat's GUI has crashed", traceback.format_exc()
         )
         dump_log(window)
 
