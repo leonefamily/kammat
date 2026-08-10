@@ -8,6 +8,10 @@ Created on Mon Feb  6 18:03:44 2023
 import math
 import PySimpleGUI as sg
 
+from kammat.gui.tk_compat import ensure_pysimplegui_tcl_compat
+
+ensure_pysimplegui_tcl_compat(sg)
+
 layout = [
     [sg.Graph(
         canvas_size=(800, 600),
