@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 from .model import (
     ConfigResult,
+    ConfigurationError,
     ISSUE_CATALOG,
     RunConfig,
     STAGE_ORDER,
