@@ -6,16 +6,11 @@ Created on Tue Feb  7 16:03:38 2023
 """
 
 import io
-import shlex
-import platform
-import subprocess
 from pathlib import Path
 import PySimpleGUI as sg
-from typing import List, Union, Callable, Any, Optional, Dict
+from typing import List, Union, Any, Optional, Dict
 from PIL import ImageTk, Image
 from matplotlib.figure import Figure
-import sys
-from multiprocessing import Process
 
 from kammat.defaults.constants import (
     CACHE_SETTINGS_PATH
@@ -23,51 +18,6 @@ from kammat.defaults.constants import (
 
 SETTINGS_FOLDER: Path = Path(CACHE_SETTINGS_PATH) / 'gui'
 LOG_FILE: Path = Path(CACHE_SETTINGS_PATH) / 'log.txt'
-INTERPRETER = f'"{sys.executable}"'
-
-
-def run_process(
-        function: Callable,
-        kwargs: Dict[str, Any]
-        ) -> Optional[Any]:
-    p = Process(target=function, kwargs=kwargs)
-    p.start()
-    p.join()
-
-
-def run_subprocess(
-        command: str,
-        cwd: str = None
-        ):
-    """
-    Run subprocess, fail if any error encountered.
-
-    Parameters
-    ----------
-    command : str
-        Command to pass to shell
-    cwd : str, optional
-        Working directory for script to execute
-
-    """
-    print(command)
-    p = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        shell=True
-    )
-
-    for line in p.stdout:
-        try:
-            string = line.decode().rstrip()
-            print(string)
-        except:
-            print('*Problem decoding string*')
-    outs = p.wait()
-    return outs
-
-
 def dump_log(
         window: sg.Window,
         console_key: str = '-CONSOLE-',
@@ -127,8 +77,8 @@ def restore_settings(
     if path.exists():
         try:
             window.load_from_disk(path)
-        except Exception as e:
-            print(e)
+        except Exception:
+            return None
 
 
 def update_visibility(
@@ -160,26 +110,6 @@ def put_plot_to_image(
         Image.open(img_buffer).resize((800, 400))
         )
     window[img_key].update(data=img)
-
-
-def prepare_command(
-        vvs_x: Dict[str, Union[str, int, float]],
-        script_path: Union[str, Path],
-        interpreter_path: str = INTERPRETER
-) -> str:
-    commands_list = []
-    for k, v in vvs_x.items():
-        if v is None:
-            continue
-        elif isinstance(v, bool):
-            if v:
-                commands_list.append(f'--{k.replace("_", "-")}')
-        elif isinstance(v, (int, float)):
-            commands_list.append(f'--{k.replace("_", "-")} {v}')
-        else:
-            commands_list.append(f'--{k.replace("_", "-")} "{v}"')
-    command = f'{interpreter_path} "{script_path}" ' + ' '.join(commands_list)
-    return command
 
 
 def sec2str(
