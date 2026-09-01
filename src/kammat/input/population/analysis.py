@@ -25,8 +25,6 @@ from kammat.defaults.constants import (
 Events = List[Dict[str, Union[Agent, td, float, str]]]
 FacilitiesStats = Dict[str, Dict[str, Union[List[td], List[Agent], List[int]]]]
 
-v = Variables()
-
 
 def counts_to_percentage(
         counts_dict: Dict[str, Union[int, float]]
@@ -338,6 +336,7 @@ def set_facilties_counts(
 def write_facilities_with_counts(
         facilities: Dict[str, gpd.GeoDataFrame],
         output_file: Union[str, Path],
+        v: Variables,
         drop_empty: bool = True
         ):
     """
@@ -350,6 +349,8 @@ def write_facilities_with_counts(
         Dictionary of facilities GeoDataFrames
     output_file : Union[str, Path]
         Where to dump file
+    v : Variables
+        Variables for population pipeline.
     drop_empty : bool, optional
         Write only rows, that have 'count_all' column above 0.
         The default is True.
@@ -385,6 +386,7 @@ def write_facilities_with_counts(
 
 def get_facilities_counts(
         agents_list: List[Agent],
+        v: Variables,
         ) -> Dict[str, Dict[str, int]]:
     """
     Get how many times each facility was visited.
@@ -398,6 +400,8 @@ def get_facilities_counts(
     ----------
     agents_list : List[Agent]
         List of agents
+    v : Variables
+        Variables for population pipeline.
 
     Returns
     -------
@@ -558,6 +562,7 @@ def analyze_population_basic(
         modal_split_save_path: Union[str, Path],
         facilities_counts_save_directory: Union[str, Path],
         relational_matrices_save_directory: Union[str, Path],
+        v: Variables,
         spatial_unit: str = 'area',
         start: td = td(0),
         end: td = td(2)
@@ -576,9 +581,9 @@ def analyze_population_basic(
     else:
         pass
 
-    facilities_counts = get_facilities_counts(agents_lists['regular'])
+    facilities_counts = get_facilities_counts(agents_lists['regular'], v=v)
     set_facilties_counts(facilities_counts, facilities)
-    write_facilities_with_counts(facilities, facilities_counts_save_directory)
+    write_facilities_with_counts(facilities, facilities_counts_save_directory, v=v)
 
     rel_mcs = get_relational_matrices(
         agents_lists['regular'], spatial_unit, start, end

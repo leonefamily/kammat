@@ -17,6 +17,7 @@ import multiprocessing
 import geopandas as gpd
 from typing import Union, List, Tuple, Dict, Callable, Any
 
+from kammat.defaults.variables import Variables
 from kammat.input.data.facilities import split_facilities
 from kammat.input.data.types import Helpers
 from kammat.input.population.utils import (
@@ -110,6 +111,7 @@ def split_agents_setup_data(
 def get_agents_list_multiproc(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         h: Helpers,
+        v: Variables,
         ncores: int = 1,
         sample: float = 1.0
 ) -> List[Agent]:
@@ -127,6 +129,8 @@ def get_agents_list_multiproc(
         every available activity.
     h : Helpers
         Dictionary of helper tables.
+    v : Variables
+        Variables for population pipeline.
     ncores : int, optional
         Positive integer number of cores to use during multiprocessing.
         The default is 1 - multiprocessing is off.
@@ -156,7 +160,7 @@ def get_agents_list_multiproc(
         else:
             agents_list = get_agents_list_strict(agents_df, h)
     else:
-        agents_list = get_agents_list(facilities, h, sample=sample)
+        agents_list = get_agents_list(facilities, h, v=v, sample=sample)
 
     return agents_list
 
@@ -212,6 +216,7 @@ def split_agents_data(
 def handle_regular_agents_multiproc(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         h: Helpers,
+        v: Variables,
         ncores: int = 1,
         sample: float = 1,
         **kwargs
@@ -227,6 +232,8 @@ def handle_regular_agents_multiproc(
         every available activity.
     h : Helpers
         Dictionary of helper tables.
+    v : Variables
+        Variables for population pipeline.
     xml_path : Union[str, Path], optional
         Path to save xml (MATSim-like) data of agents
     csv_path : Union[str, Path], optional
@@ -245,7 +252,7 @@ def handle_regular_agents_multiproc(
 
     """
     agents_list = get_agents_list_multiproc(
-        facilities, h, ncores, sample=sample
+        facilities=facilities, h=h, v=v, ncores=ncores, sample=sample
     )
     # agents_list = random.sample(agents_list, int(len(agents_list) * sample))
 
@@ -274,6 +281,7 @@ def handle_regular_agents_multiproc(
 def prepare_and_handle_agents(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         h: Helpers,
+        v: Variables,
         ncores: int = 1,
         sample: float = 1,
         **kwargs
@@ -291,6 +299,8 @@ def prepare_and_handle_agents(
         every available activity.
     h : Helpers
         Dictionary of helper tables.
+    v: Variables
+        Variables for population pipeline.
     ncores : int, optional
         Number of cores to use. The default is 1.
     sample : float, optional
@@ -311,11 +321,11 @@ def prepare_and_handle_agents(
 
     logging.info('Additional population is being processed...')
     additional_agents_list = handle_additional_agents(
-        facilities, h, sample
+        facilities=facilities, h=h, v=v, sample=sample
         )
     logging.info('Regular population is being processed...')
     regular_agents_list = handle_regular_agents_multiproc(
-        facilities, h, ncores, sample, **kwargs
+        facilities, h=h, v=v, ncores=ncores, sample=sample, **kwargs
         )
     agents_lists = {
         'regular': regular_agents_list,

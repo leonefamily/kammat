@@ -13,7 +13,6 @@ import geopandas as gpd
 from datetime import timedelta as td
 from typing import Union, List, Dict, Literal
 
-
 from kammat.defaults.constants import (
     SPATIAL_LEVELS, AGENTS_COLUMNS
     )
@@ -23,8 +22,6 @@ from kammat.input.population.utils import scale_to_percent
 from kammat.input.data.types import (
     Categories, Staying, Diaries, ModalSplit, Helpers
 )
-
-v = Variables()
 
 
 def set_categories(
@@ -300,6 +297,7 @@ def get_agents_list_strict(
 
 def get_basic_agents_df(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables,
         sample: float = 1.0
         ) -> pd.DataFrame:
     """
@@ -310,6 +308,8 @@ def get_basic_agents_df(
     facilities : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with (Geo)DataFrames, containing info about
         facilities for every available activity.
+    v : Variables
+        Variables for population pipeline.
     sample : float, optional
         Multiply with this fraction to get reduced/increased agents number.
         The default is 1.0.
@@ -331,6 +331,7 @@ def get_basic_agents_df(
 def get_agents_list(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         h: Helpers,
+        v: Variables,
         sample: float = 1.0
 ) -> List[Agent]:
     """
@@ -343,10 +344,12 @@ def get_agents_list(
     facilities : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with (Geo)DataFrames, containing info about
         facilities for every available activity.
-    h : Helers
+    h : Helpers
         Dictionary with helper tables, loaded from .input.data.load
         Tables 'distances' and 'target_probabilities'
         are extracted from the dictionary.
+    v: Variables
+        Variables for population pipeline.
     sample : float, optional
         Multiply with this fraction to get reduced/increased agents number.
         The default is 1.0.
@@ -358,7 +361,7 @@ def get_agents_list(
 
     """
     logging.info('Agents processing started')
-    agents_df = get_basic_agents_df(facilities, sample=sample)
+    agents_df = get_basic_agents_df(facilities, v=v, sample=sample)
     set_categories(agents_df, h['categories'])
     set_modes(agents_df, h['modal_split'])
     set_diaries(agents_df, h['diaries'])

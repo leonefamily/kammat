@@ -25,9 +25,6 @@ from kammat.input.population.agent import (
     )
 
 
-v = Variables()
-
-
 def return_to_base(
         agent: Agent,
         base_coords: Tuple[float],
@@ -108,8 +105,8 @@ def process_ctlog_acts(
         acts: List[str],
         row: pd.Series,
         base_coords: Tuple[float],
-        modes_speed: Dict[str, float],
-        facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
+        facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables
         ) -> Agent:
     """
     Assign places and start/endtimes to a city logistics agent
@@ -125,6 +122,8 @@ def process_ctlog_acts(
     facilities : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with (Geo)DataFrames, containing info about
         facilities for every available activity.
+    v : Variables
+        Variables for population pipeline
 
     Returns
     -------
@@ -132,17 +131,16 @@ def process_ctlog_acts(
         Agent object populated with all facilities and times
 
     """
-
-    # here posiible problem with pandas automatically setting
+    # here possible problem with pandas automatically setting
     # str to Timestamp, we need Timedelta though
-    if isinstance(row.service_start, pd.Timestamp):
-        row.service_start = str(row.service_start.time())
-    if isinstance(row.service_end, pd.Timestamp):
-        row.service_end = str(row.service_end.time())
+    if isinstance(row['service_start'], pd.Timestamp):
+        row['service_start'] = str(row['service_start'].time())
+    if isinstance(row['service_end'], pd.Timestamp):
+        row['service_end'] = str(row['service_end'].time())
 
     # !!! more elegant or logical way needed:
-    st = str_to_td(row.service_start) + td(minutes=np.random.normal(random.randint(20, 600), 5))
-    en = str_to_td(row.service_end)
+    st = str_to_td(row['service_start']) + td(minutes=np.random.normal(random.randint(20, 600), 5))
+    en = str_to_td(row['service_end'])
     if en == td(0):
         en += td(1)
     now = st
@@ -168,7 +166,7 @@ def process_ctlog_acts(
         next_act = acts[j + 1]
         if next_act == v.acts['citylog']:
             now = return_to_base(
-                agent, base_coords, modes_speed['car'], now,
+                agent, base_coords, v.speeds['car'], now,
                 row['mean_base_cooldown_duration_min']
                 )
             visited.append(next_act)
@@ -181,14 +179,14 @@ def process_ctlog_acts(
             facility_id, coords = get_min_diff(facilities, next_act,
                                                gen_dist,
                                                agent.coords[-1],
-                                               False, filtered)
+                                               False, filtered, v=v)
             dist = proj_distance(agent.coords[-1], coords)
-            travtime = td(minutes=dist / modes_speed['car'])
+            travtime = td(minutes=dist / v.speeds['car'])
             waittime = td(
                 minutes=np.random.normal(1, 0.3) * row.mean_stop_duration_min)
             if now + travtime > en:
                 if row['has_base']:
-                    return_to_base(agent, base_coords, modes_speed['car'], now,
+                    return_to_base(agent, base_coords, v.speeds['car'], now,
                                    row.mean_base_cooldown_duration_min)
                     visited += v.acts['citylog']
                 agent.activities = visited
@@ -211,6 +209,7 @@ def process_ctlog_acts(
 def setup_city_logistics(
         h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables,
         sample: Union[float, int] = 1
 ) -> List[Agent]:
     """
@@ -224,6 +223,8 @@ def setup_city_logistics(
     facilities : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with (Geo)DataFrames, containing info about
         facilities for every available activity. Must have `cit` activity
+    v : Variables
+        Variables for population pipeline
     sample : Union[float, int], optional
         Fraction of the original city logistics counts. The default is 1.
 
@@ -296,10 +297,10 @@ def setup_city_logistics(
                     base_coords = filtered.sample(1).iloc[0][['x', 'y']].tolist()
 
                 agent = process_ctlog_acts(
-                    acts, row, base_coords, v.speeds, facilities
+                    acts=acts, row=row, base_coords=base_coords, facilities=facilities, v=v
                     )
                 agent.info = f"{company['base_type']}_{company['base_name']}_{veh}"
-                agent.prepare_xml_block(agent.info)
+                agent.prepare_xml_block(agent.info, v=v)
                 agents.append(agent)
         logging.info(f'Service type {row["service_type"]} processed')
     logging.info('City logistics processed')
@@ -309,6 +310,7 @@ def setup_city_logistics(
 def setup_simple_diaries(
         h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables,
         kind: str = 'transit',
         mode: str = 'car',
         pref: str = '',
@@ -328,6 +330,8 @@ def setup_simple_diaries(
         Dictionary with (Geo)DataFrames, containing info about
         facilities for every available activity.
         Must have `tra` and `fre` activity
+    v : Variables
+        Variables for population pipeline.
     kind : str, optional
         Whether 'oneway' (from some transit point to destination) or
         'transit' (between two transit points). The default is 'transit'.
@@ -420,7 +424,7 @@ def setup_simple_diaries(
                     tr.facilities = [point1, point2]
                     tr.calculate_trips()
                     tr.info = f"{pref}{point1}_{point2}_{i}"
-                    tr.prepare_xml_block(tr.info)
+                    tr.prepare_xml_block(tr.info, v=v)
 
                 wholelist.extend(ag_list)
                 logging.info(f'{point1}-{point2} {mode} {kind} processed')
@@ -437,6 +441,7 @@ def setup_simple_diaries(
 def handle_additional_agents(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         h: Helpers,
+        v: Variables,
         sample: float = 1
         ) -> List[Agent]:
     """
@@ -452,6 +457,8 @@ def handle_additional_agents(
         Dictionary with helper tables, loaded from .input.data package
         Tables 'time_courses' and 'city_logistics' are optionally extracted
         from the dictionary.
+    v : Variables
+        Variables for population pipeline.
     sample : float, optional
         Fraction of population to draw from agents list. The default is 1.
 
@@ -467,6 +474,7 @@ def handle_additional_agents(
         citylog_agents = setup_city_logistics(
             h=h,
             facilities=facilities,
+            v=v,
             sample=sample
         )
         additional_agents_list.extend(citylog_agents)
@@ -475,6 +483,7 @@ def handle_additional_agents(
         ow_flows = setup_oneway_flows_diaries(
             facilities=facilities,
             h=h,
+            v=v,
             sample=sample
         )
         additional_agents_list.extend(ow_flows)
@@ -483,6 +492,7 @@ def handle_additional_agents(
             transitcars = setup_simple_diaries(
                 h=h,
                 facilities=facilities,
+                v=v,
                 kind='transit',
                 mode='car',
                 sample=sample
@@ -491,6 +501,7 @@ def handle_additional_agents(
         if 'time_courses' in h and v.acts['freight'] in facilities and v.acts['transit'] in facilities:
             transittruck = setup_simple_diaries(
                 h, facilities,
+                v=v,
                 kind='transit',
                 mode='truck',
                 pref='f_',
@@ -500,6 +511,7 @@ def handle_additional_agents(
             onewaytruck = setup_simple_diaries(
                 h=h,
                 facilities=facilities,
+                v=v,
                 kind='oneway',
                 mode='truck',
                 pref='f_',
@@ -513,6 +525,7 @@ def handle_additional_agents(
 def setup_oneway_flows_diaries(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         h: Helpers,
+        v: Variables,
         sample: float = 1
 ) -> List[Agent]:
     ow_agents = []
@@ -675,7 +688,7 @@ def setup_oneway_flows_diaries(
             ]
             ow_ag.calculate_trips()
             ow_ag.info = f"{'_'.join(ow_ag.facilities)}_{mode}_{num}"
-            ow_ag.prepare_xml_block(ow_ag.info)
+            ow_ag.prepare_xml_block(ow_ag.info, v=v)
             ow_agents.append(ow_ag)
     return ow_agents
 

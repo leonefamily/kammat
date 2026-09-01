@@ -41,6 +41,7 @@ def load_data(
         categories_path: Union[str, Path],
         diaries_path: Union[str, Path],
         distances_path: Union[str, Path],
+        v: Variables,
         clusters_path: Union[str, Path] = None,
         citylog_points_path: Union[str, Path] = None,
         freight_points_path: Union[str, Path] = None,
@@ -69,6 +70,8 @@ def load_data(
         DESCRIPTION.
     distances_path : Union[str, Path]
         DESCRIPTION.
+    v : Variables
+        Variables for the pipeline.
     clusters_path : Union[str, Path], optional
         DESCRIPTION. The default is None.
     citylog_points_path : Union[str, Path], optional
@@ -105,9 +108,6 @@ def load_data(
                                ModalSplit, TimeCourses, Categories, Relations]]
 
     """
-
-    v = Variables()
-
     if city_logistics_path is None and citylog_points_path is not None:
         raise RuntimeError('City logistics points are specified, but'
                            'city logistics info is not')
@@ -117,11 +117,12 @@ def load_data(
     # check connections between diaries
     helpers = {}
 
-    facilities = load_facilities(facilities_path,
-                                 clusters_path,
-                                 transit_points_path,
-                                 freight_points_path,
-                                 citylog_points_path)
+    facilities = load_facilities(facilities_path=facilities_path,
+                                 v=v,
+                                 clusters_path=clusters_path,
+                                 transit_points_path=transit_points_path,
+                                 freight_points_path=freight_points_path,
+                                 citylog_points_path=citylog_points_path)
 
     if oneway_flows_path:
         helpers['oneway_flows'] = load_oneway_flows(oneway_flows_path, facilities)
@@ -191,11 +192,11 @@ def load_data(
 
     if target_probabilities_path:
         helpers['target_probabilities'] = load_target_probabilities(
-            target_probabilities_path, activities_for_distances, spatial_units
+            target_probabilities_path, activities_for_distances, spatial_units, v=v
         )
 
     helpers['distances'] = load_distances(
-        distances_path, categories, activities_for_distances, spatial_units
+        distances_path, categories, activities_for_distances, spatial_units, v=v
     )
 
     if helpers['distances'].target_precision is not None and not target_probabilities_path:

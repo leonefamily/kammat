@@ -27,10 +27,7 @@ from kammat.input.data.utils import (
     # !!! get_missing_spatial_units?
     )
 from kammat.input.population.utils import split_list
-
 from kammat.defaults.variables import Variables
-
-v = Variables()
 
 
 def assign_facilities_clusters(
@@ -207,7 +204,8 @@ def has_only_supported_modes(
 
 
 def load_transit_points(
-        transit_points_path: str
+        transit_points_path: str,
+        v: Variables
         ) -> gpd.GeoDataFrame:
     """
     Load, check and reformat transit points file
@@ -216,6 +214,8 @@ def load_transit_points(
     ----------
     transit_points_path : str
         Transit points location
+    v : Variables
+        Variables for the pipeline
 
     Raises
     ------
@@ -331,8 +331,9 @@ def load_facilities_common_part(
 
 
 def load_freight_points(
-        freight_points_path: str
-        ) -> gpd.GeoDataFrame:
+        freight_points_path: str,
+        v: Variables
+) -> gpd.GeoDataFrame:
     """
     Load, check and format freight points
 
@@ -340,6 +341,8 @@ def load_freight_points(
     ----------
     freight_points_path : str
         Freight points location
+    v : Variables
+        Variables for the pipeline
 
     Raises
     ------
@@ -368,7 +371,8 @@ def load_freight_points(
 
 
 def load_citylog_points(
-        citylog_points_path: str
+        citylog_points_path: str,
+        v: Variables,
         ) -> gpd.GeoDataFrame:
     """
     Load and check city logistics points
@@ -377,6 +381,8 @@ def load_citylog_points(
     ----------
     citylog_points_path : str
         City logistics points location
+    v : Variables
+        Variables for the pipeline
 
     Returns
     -------
@@ -473,6 +479,7 @@ def get_city_center(
 
 def split_facilities(
         facilities: Dict[str, gpd.GeoDataFrame],
+        v: Variables,
         pieces: int = 6
         ) -> Dict[str, gpd.GeoDataFrame]:
     """
@@ -484,6 +491,8 @@ def split_facilities(
         DESCRIPTION.
     pieces : TYPE, optional
         DESCRIPTION. The default is 6.
+    v : Variables
+        Variables for the pipeline
 
     Returns
     -------
@@ -491,7 +500,6 @@ def split_facilities(
         DESCRIPTION.
 
     """
-    v = Variables()
     outdict = {num: {} for num in range(pieces)}
     for act, df in facilities.items():
         if act in v.capacity_split_affected:
@@ -514,10 +522,11 @@ def split_facilities(
 
 def load_facilities(
         facilities_path: str,
+        v: Variables,
         clusters_path: str = None,
         transit_points_path: str = None,
         freight_points_path: str = None,
-        citylog_points_path: str = None
+        citylog_points_path: str = None,
         ) -> Dict[str, gpd.GeoDataFrame]:
     """
     # !!!
@@ -526,6 +535,8 @@ def load_facilities(
     ----------
     facilities_path : str
         DESCRIPTION.
+    v : Variables
+        Variables for the pipeline.
     clusters_path : str, optional
         DESCRIPTION. The default is None.
     transit_points_path : str, optional
@@ -556,11 +567,11 @@ def load_facilities(
     del facilities_gdf
 
     if transit_points_path:
-        facilities[v.acts['transit']] = load_transit_points(transit_points_path)
+        facilities[v.acts['transit']] = load_transit_points(transit_points_path, v=v)
     if freight_points_path:
-        facilities[v.acts["freight"]] = load_freight_points(freight_points_path)
+        facilities[v.acts["freight"]] = load_freight_points(freight_points_path, v=v)
     if citylog_points_path:
-        facilities[v.acts["citylog"]] = load_citylog_points(citylog_points_path)
+        facilities[v.acts["citylog"]] = load_citylog_points(citylog_points_path, v=v)
 
     if v.center_coords is None:
         v.center_coords = get_city_center(facilities, v.capacity_affected)
