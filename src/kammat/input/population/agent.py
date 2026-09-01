@@ -32,7 +32,6 @@ from kammat.input.population.utils import (
 from kammat.defaults.constants import CACHE_SETTINGS_PATH
 
 CACHE_FOLDER: Path = Path(CACHE_SETTINGS_PATH) / 'population'
-v = Variables()
 
 
 class Agent:
@@ -238,7 +237,8 @@ class Agent:
 
     def generate_dists(
             self,
-            h: Helpers
+            h: Helpers,
+            v: Variables
             ):
         """
         Generates random variable from Weibull distribution
@@ -258,7 +258,8 @@ class Agent:
         h : Helpers
             Dictionary with helper tables, loaded from input_data module.
             Table 'distances' is extracted from the dictionary.
-
+        v : Variables
+            Variables for population pipeline.
         """
         dists = []
         for i, act in enumerate(self.activities):
@@ -277,6 +278,7 @@ class Agent:
             self,
             facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
             h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+            v: Variables,
             reset_at_home: bool = False,
             closer_to_home: bool = True,
             refiller: Optional[Dict[str, List[List[int]]]] = None
@@ -303,6 +305,8 @@ class Agent:
             Dictionary with helper tables, loaded from input_data.py.
             Tables 'distances' and 'target_probabilities'
             are extracted from the dictionary.
+        v : Variables
+            Variables for population pipeline.
         reset_at_home : bool, optional
             Define, whether the mode should reset and be found again,
             when the agent arrives home
@@ -327,7 +331,7 @@ class Agent:
                                              self.home_facility)
             }
         }
-        remove_first, currnext_acts = group_upcoming_acts(self.activities, n=3)
+        remove_first, currnext_acts = group_upcoming_acts(self.activities, v=v, n=3)
         # first act is removed, if agent doesn't start at home
         lastact = None  # is an activity of the last visited facility
 
@@ -378,7 +382,7 @@ class Agent:
                 capacity_used.append(False)
             # -----------------------------------------------------------------
 
-            reduce = must_reduce(next_act)
+            reduce = must_reduce(next_act, v=v)
             # whether to reduce capacity of facility
             isup = next_act.isupper()
             # uppercase means escort: same facilities, but different stats in h
@@ -417,7 +421,7 @@ class Agent:
             else:  # all other simulated activities
                 try:
                     gen_dist, next_spat_ref_prob = generate_dist_spatially(
-                        h, curr_act, next_act, spat_refs[-1]
+                        h, v, curr_act, next_act, spat_refs[-1]
                     )
                 except Exception as e:
                     raise RuntimeError(
@@ -497,7 +501,7 @@ class Agent:
                     # prefer places that lie in predefined clusters
                     filtered_cls = get_places_cluster(
                         filtered_rel, facilities,
-                        next_act_l, gen_dist, coords[-1]
+                        next_act_l, gen_dist, coords[-1], outer_offset=v.cluster_dist_thresh
                     )
                 else:
                     filtered_cls = filtered_rel
@@ -547,6 +551,7 @@ class Agent:
                     fclt, coord, next_spat_ref = get_min_diff(
                         facilities, next_act_l, new_gen_dist,
                         coords[-1], reduce, filtered_cls,  # !!! filtered
+                        v=v,
                         extended=True,
                         closer_to_home=closer_to_home,
                         home_coord=self.home_geom,
@@ -611,7 +616,7 @@ class Agent:
         self.coords = coords[1:] if remove_first else coords
         self.gendists = intify(gendists[1:] if remove_first else gendists)
         self.trips = intify(dists[1:] if remove_first else dists)
-        self.modes = self._fix_private_modes(modes)
+        self.modes = self._fix_private_modes(modes, v=v)
         self.pt_stop_walks = intify(pt_stop_walks[1:] if remove_first else pt_stop_walks)
         self.spatial_references = spat_refs[1:] if remove_first else spat_refs
         self.capacity_used = capacity_used[1:] if remove_first else capacity_used
@@ -619,7 +624,8 @@ class Agent:
     def pick_facilities(
             self,
             facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
-            h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
+            h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+            v: Variables
             ):
         """
         Pick facilities for agent's diary, regardless of spatial aspect.
@@ -633,7 +639,8 @@ class Agent:
             facilities for every available activity.
         h : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
             Dictionary with helper tables, loaded from input_data.py.
-
+        v : Variables
+            Variables for population pipeline.
         """
         fclts = []
         coords = []
@@ -654,7 +661,7 @@ class Agent:
                 coords.append(self.home_geom)
                 continue
 
-            reduce = must_reduce(act)
+            reduce = must_reduce(act, v=v)
             isup = act.isupper()
 
             if act.lower() in [v.acts['worktrip'], v.acts['citylog'],
@@ -675,7 +682,7 @@ class Agent:
                        v.acts['cycling'], v.acts['cycling'].upper()):
                 fclt, coord = self.activities[i - 1], pre_coord
             else:
-                fclt, coord = pick_any_place(facilities, act, gen_dist, h,
+                fclt, coord = pick_any_place(facilities, act, gen_dist, h, v,
                                              pre_coord, reduce)
             fclts.append(fclt)
             coords.append(coord)
@@ -787,6 +794,7 @@ class Agent:
     def pick_mode_spatially(
             self,
             h: Helpers,
+            v: Variables,
             tripnum: int,
             triplen: Union[int, float],
             stopwalk1: Union[int, float],
@@ -817,6 +825,8 @@ class Agent:
         reset_at_home : bool, optional
             Define, whether the mode should reset and be found again,
             when the agent arrives home. The default is True
+        v : Variables
+            Variables for population pipeline.
 
         Raises
         ------
@@ -848,7 +858,7 @@ class Agent:
 
         mode = choose_single_mode(self.category, self.activities[tripnum],
                                   self.activities[tripnum + 1], triplen,
-                                  stopwalk1, stopwalk2, h, spat_ref1,
+                                  stopwalk1, stopwalk2, h, v, spat_ref1,
                                   spat_ref2, init_mode, walk_thresh,
                                   pt_stop_thresh)
         if init_mode is None:
@@ -858,6 +868,7 @@ class Agent:
     def pick_modes(
             self,
             h: Helpers,
+            v: Variables,
             walk_thresh: Union[int, float] = 1000,
             pt_stop_thresh: Union[int, float] = 750
             ):
@@ -895,17 +906,18 @@ class Agent:
             mode = choose_single_mode(self.category, self.activities[i],
                                       self.activities[i + 1], trip,
                                       self.pt_stop_walks[i],
-                                      self.pt_stop_walks[i + 1], h,
+                                      self.pt_stop_walks[i + 1], h, v,
                                       spat_ref, None,
                                       self.init_mode, walk_thresh,
                                       pt_stop_thresh)
             modes.append(mode)
 
-        self.modes = self._fix_private_modes(modes)
+        self.modes = self._fix_private_modes(modes, v=v)
 
     def _fix_private_modes(
             self,
-            modes: List[str]
+            modes: List[str],
+            v: Variables
             ) -> List[str]:
         """
         Replaces modes, that would conflict with the private mode usage,
@@ -917,6 +929,8 @@ class Agent:
         ----------
         modes : List[str]
             List with preliminary modes to be checked and fixed
+        v : Variables
+            Variables for population pipeline.
 
         Returns
         -------
@@ -968,6 +982,7 @@ class Agent:
 
     def pick_startend_link(
             self,
+            v: Variables,
             links: gpd.GeoDataFrame = None
             ):
         """
@@ -976,6 +991,8 @@ class Agent:
 
         Parameters
         ----------
+        v : Variables
+            Variables for population pipeline.
         links : gpd.GeoDataFrame
             Filtered links in GeoDataFrame, that was extracted from
             MATSim network and had `nofacility` column equal to 0.
@@ -1029,7 +1046,8 @@ class Agent:
 
     def pick_lastings(
             self,
-            h: Helpers
+            h: Helpers,
+            v: Variables
             ):
         """
         Calculate lastings of every activity based on ``h``'s `times` table
@@ -1046,6 +1064,8 @@ class Agent:
         h : Helpers
             Dictionary with helper tables, loaded from input_data module.
             Table 'times' is extracted from the dictionary.
+        v : Variables
+            Variables for population pipeline.
 
         """
         visited_dict = {}
@@ -1068,7 +1088,8 @@ class Agent:
     def reduce_lastings(
             self,
             h: Helpers,
-            max_lasting: float = v.lasting_limit
+            v: Variables,
+            max_lasting: Union[float, int]
             ):
         """
         Evenly reduces lasting of every activity if time spend performing
@@ -1081,6 +1102,8 @@ class Agent:
         h : Helpers
             Dictionary with helper tables, loaded from input_data module.
             Table 'times' is extracted from the dictionary.
+        v : Variables
+            Variables for population pipeline.
         max_lasting : timedelta, optional
             Maximum length of agent's day
 
@@ -1099,12 +1122,13 @@ class Agent:
                 multiplyby = maxlasting_red / lastingsum_red
 
                 self.lastings = [lt * multiplyby for lt in self.lastings]
-                self.pick_startend_times(h)
+                self.pick_startend_times(h, v=v)
         else:
             logging.warning(f'{str(self)} has no times to reduce')
 
     def pick_startend_times_strict(
             self,
+            v: Variables
             ):
         """
         Assumes that ``h``'s diaries are strict and that first start time is
@@ -1114,13 +1138,18 @@ class Agent:
         Other start and end times and inferred from trip time and lastings of
         activities.
 
+        Parameters
+        ----------
+        v : Variables
+            Variables for population pipeline.
+
         """
         starts = []
         ends = []
         triptimes = []
         for i, act in enumerate(self.activities):
             if i == 0:
-                triptime = self._get_triptime(0)
+                triptime = self._get_triptime(0, v=v)
                 starts = self.starttimes
                 nextstart = self.starttimes[1]
                 end = nextstart - triptime
@@ -1131,7 +1160,7 @@ class Agent:
                     triptime = triptimes[0]
                     start = starts[1]
                 else:
-                    triptime = self._get_triptime(i - 1)
+                    triptime = self._get_triptime(i - 1, v=v)
                     start = ends[i - 1] + triptime
                     triptimes.append(triptime)
                     starts.append(start)
@@ -1144,7 +1173,8 @@ class Agent:
 
     def _get_triptime(
             self,
-            tripnum: int
+            tripnum: int,
+            v: Variables
             ) -> timedelta:
         """
         Calculate travel time by the specified type of
@@ -1154,6 +1184,8 @@ class Agent:
         ----------
         tripnum : int
             Number of agent's trip (technically, rather number of activity)
+        v : Variables
+            Variables for population pipeline.
 
         Returns
         -------
@@ -1167,7 +1199,8 @@ class Agent:
 
     def pick_startend_times(
             self,
-            h: Helpers
+            h: Helpers,
+            v: Variables
             ):
         """
         Calculate time of the start and the end of every activity, including
@@ -1179,6 +1212,8 @@ class Agent:
         h : Helpers
             Dictionary with helper tables, loaded from input_data module.
             Table 'times' is extracted from the dictionary.
+        v : Variables
+            Variables for population pipeline.
 
         """
         starts = []
@@ -1191,7 +1226,7 @@ class Agent:
                                         self.activities[1], 'mu_start']
                     sdnorm = h['times'].loc[h['times'].activity ==
                                             self.activities[1], 'sd_start']
-                    triptime = self._get_triptime(0)
+                    triptime = self._get_triptime(0, v=v)
                     nextstart = timedelta(days=abs(np.random.normal(mu, sdnorm))[0])
                     end = nextstart - triptime
                     starts = [timedelta(0), nextstart]
@@ -1210,7 +1245,7 @@ class Agent:
                     triptime = triptimes[0]
                     start = starts[1]
                 else:
-                    triptime = self._get_triptime(i - 1)
+                    triptime = self._get_triptime(i - 1, v=v)
                     start = ends[i - 1] + triptime
                     triptimes.append(triptime)
                     starts.append(start)
@@ -1287,6 +1322,7 @@ class Agent:
     def prepare_xml_block(
             self,
             pers_id: Union[str, int],
+            v: Variables,
             teleported: bool = False
             ):
         """
@@ -1300,6 +1336,8 @@ class Agent:
         pers_id : Union[str, int]
             Unique string to precisely identificate every particular agent
             later on. MATSim crashes, if agents don't have distinct IDs.
+        v : Variables
+            Variables for population pipeline.
         teleported : bool, optional
             Whether to include modes `carpool`, `bike', `walk` into xml block.
             They are known to be teleported (not network) modes and are not
@@ -1401,6 +1439,7 @@ class Agent:
             self,
             facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
             h: Helpers,
+            v: Variables,
             use_links: bool = False,
             prefer_private: bool = True,
             abandon_pt: bool = False,
@@ -1417,6 +1456,8 @@ class Agent:
             facilities for every available activity.
         h : Helpers
             Dictionary with helper tables, loaded from `input.data` module.
+        v : Variables
+            Variables for population pipeline.
         use_links : bool, optional
             Whether to consider some links inaccessible. Requires MATSim
             network in helpers with `nofacility` attr. The default is False.
@@ -1433,30 +1474,30 @@ class Agent:
         """
         if 'target_probabilities' in h:
             self.pick_dists_facilities_spatially(
-                facilities, h,
+                facilities, h, v=v,
                 refiller=refiller
             )
         else:
-            self.generate_dists(h)
+            self.generate_dists(h, v=v)
             pick_facilities(
-                self, facilities, h
+                self, facilities, h, v=v
                 )  # !!! include into self?
             self.calculate_trips()
             self.stop_dists(h)
-            self.pick_modes(h)
+            self.pick_modes(h, v=v)
 
         if h['diaries'].type == 'strict':
-            self.pick_startend_times_strict()
+            self.pick_startend_times_strict(v=v)
         else:
-            self.pick_startend_times(h)
-            self.pick_lastings(h)
-            self.reduce_lastings(h)
+            self.pick_startend_times(h, v=v)
+            self.pick_lastings(h, v=v)
+            self.reduce_lastings(h, v=v, max_lasting=v.lasting_limit)
         if use_links:
             self.pick_startend_link(h['net'])
         if prefer_private:
             self.prefer_private_mode(once_car_always_car=True,
                                      abandon_pt=abandon_pt)
-        self.prepare_xml_block(self.info, teleported=include_teleported)
+        self.prepare_xml_block(self.info, v=v, teleported=include_teleported)
         self.prepare_csv_row(self.info)
 
     def show_trips(
@@ -1566,8 +1607,8 @@ def alter_suburb_dist(
         last_coord: Tuple[float],
         gen_dist: Union[int, float],
         filtered: Union[gpd.GeoDataFrame, pd.DataFrame],
-        outer_offset: Union[int, float] = v.cluster_dist_thresh,
-        alter_thresh: Union[int, float] = v.reach_percentage
+        outer_offset: Union[int, float],
+        alter_thresh: Union[int, float]
         ) -> float:
     """
     Add random distance in range from the city center to the farthest reachable
@@ -1626,8 +1667,8 @@ def alter_any_dist(
         last_coord: Tuple[float],
         gen_dist: Union[int, float],
         filtered: Union[gpd.GeoDataFrame, pd.DataFrame],
-        outer_offset: Union[int, float] = v.cluster_dist_thresh,
-        alter_thresh: Union[int, float] = v.reach_percentage,
+        outer_offset: Union[int, float],
+        alter_thresh: Union[int, float],
         alter_thresh_abs: Union[int, float] = 5,
         max_increase_ratio: Union[int, float] = 0,
         max_increased_dist: Union[int, float] = 0
@@ -1711,7 +1752,7 @@ def get_places_cluster(
         gen_dist: Union[int, float],
         prev: Union[Tuple[float], List[float]],
         inner_offset: Union[int, float] = 0,
-        outer_offset: Union[int, float] = v.cluster_dist_thresh,
+        outer_offset: Union[int, float] = 0,
         sample_size: int = 5
         ) -> Union[gpd.GeoDataFrame, pd.DataFrame]:
     """
@@ -1788,6 +1829,7 @@ def get_places_cluster(
 
 def group_upcoming_acts(
         acts: List[str],
+        v: Variables,
         n: int = 2
         ) -> Tuple[bool, List[Tuple[str]]]:
     """
@@ -1801,6 +1843,8 @@ def group_upcoming_acts(
     ----------
     acts : List[str]
         List containing string codes of agent's activities
+    v : Variables
+        Variables for population pipeline.
     n : int, optional
         An integer describing how many activities are in each group
 
@@ -1935,6 +1979,7 @@ def choose_single_mode(
         stopwalk1: Union[int, float],
         stopwalk2: Union[int, float],
         h: Dict[str, Union[pd.DataFrame, gpd.GeoDataFrame]],
+        v: Variables,
         spat_ref1: Dict[str, str],
         spat_ref2: Dict[str, str] = None,
         init_mode: str = None,
@@ -1974,6 +2019,8 @@ def choose_single_mode(
     h : Dict[str, Union[pd.DataFrame, gpd.GeoDataFrame]]
         Dictionary with helper tables, loaded from input_data module.
         Table 'modal_split' is extracted from the dictionary.
+    v : Variables
+        Variables for population pipeline.
     spat_ref1 : Dict[str, str]
         Spatial reference of act1, 'modal_split' precision is used
     spat_ref2 : Dict[str, str], optional
@@ -2058,6 +2105,7 @@ def choose_single_mode(
 
 def generate_dist_spatially(
         h: Helpers,
+        v: Variables,
         curr_act: str,
         next_act: str,
         curr_spat_ref: Dict[str, str]
@@ -2071,6 +2119,8 @@ def generate_dist_spatially(
         Dictionary with helper tables, loaded from input_data module.
         Tables 'distances' and 'dist_probabilities' are extracted from the
         dictionary.
+    v : Variables
+        Variables for population pipeline.
     curr_act : str
         Current activity string code
     next_act : str
@@ -2332,7 +2382,8 @@ def get_spat_ref_dict(
 def pick_facilities(
         agent: Agent,
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
-        h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
+        h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables
         ):
     """
     Pick facilities for agent's diary, not taking spatial aspect into account.
@@ -2347,6 +2398,8 @@ def pick_facilities(
         facilities for every available activity.
     h : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with helper tables, loaded from input_data.py.
+    v : Variables
+        Variables for population pipeline.
 
     Returns
     -------
@@ -2372,7 +2425,7 @@ def pick_facilities(
             coords.append(agent.home_geom)
             continue
 
-        reduce = must_reduce(act)
+        reduce = must_reduce(act, v=v)
         isup = act.isupper()
 
         if act.lower() in [v.acts['worktrip'], v.acts['citylog'],
@@ -2392,7 +2445,7 @@ def pick_facilities(
             fclt, coord = agent.activities[i - 1], pre_coord
         else:
             fclt, coord = pick_any_place(
-                facilities, act, gen_dist, h, pre_coord, reduce
+                facilities, act, gen_dist, h, v, pre_coord, reduce
             )
         fclts.append(fclt)
         coords.append(coord)
@@ -2411,6 +2464,7 @@ def pick_any_place(
         act: str,
         gen_dist: Union[int, float],
         h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables,
         coord: Tuple[float],
         reduce: bool = False,
         extended: bool = False) -> Tuple[str, Tuple[float], Dict[str, str]]:
@@ -2429,6 +2483,8 @@ def pick_any_place(
         Generated distance to look for facility
     h : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with helper tables, loaded from input_data.py
+    v : Variables
+        Variables for population pipeline.
     coord : Tuple[float]
         x, y coordinates of last visited point
     reduce : bool, optional
@@ -2447,18 +2503,19 @@ def pick_any_place(
     filtered = include_indices(facilities, h, act_l)
     if not extended:
         facility_id, coords = get_min_diff(
-            facilities, act_l, gen_dist, coord, reduce, filtered
+            facilities, act_l, gen_dist, coord, reduce, filtered, v=v
         )
         return facility_id, coords
     else:
         facility_id, coords, spat_dict = get_min_diff(
-            facilities, act_l, gen_dist, coord, reduce, filtered, extended
+            facilities, act_l, gen_dist, coord, reduce, filtered, v=v, extended=extended
         )
         return facility_id, coords, spat_dict
 
 
 def must_reduce(
-        act: str
+        act: str,
+        v: Variables
         ) -> bool:
     """
     Whether to reduce capacity of activity's facility. Capacity isn't reduced,
@@ -2469,6 +2526,8 @@ def must_reduce(
     ----------
     act : str
         String code of activity
+    v : Variables
+        Variables for population pipeline.
 
     Returns
     -------
@@ -2631,6 +2690,7 @@ def get_min_diff(
         xycoords: Tuple[float],
         reduce: bool,
         facility_df: Union[gpd.GeoDataFrame, pd.DataFrame],
+        v: Variables,
         extended: bool = False,
         fail_on_error: bool = False,
         closer_to_home: bool = False,
@@ -2659,6 +2719,8 @@ def get_min_diff(
         Whether to reduce picked facility's capacity. The default is False.
     facility_df : Union[gpd.GeoDataFrame, pd.DataFrame]
         Table of specified activity's facilities with applied filters
+    v : Variables
+        Variables for population pipeline.
     extended : bool, optional
         Whether to include spatial dictionary to output. The default is False.
     fail_on_error : bool, optional
@@ -2735,6 +2797,7 @@ def get_min_diff(
             return get_min_diff(
                 facilities, act, gen_dist,
                 xycoords, reduce, all_facilities,
+                v=v,
                 extended=extended,
                 fail_on_error=True,
                 closer_to_home=closer_to_home,
@@ -2809,6 +2872,7 @@ def report_progress(
 def check_capacity_sufficiency(
         agents_list: List[Agent],
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables,
         action_on_lacking_capacity: Literal['error', 'warn', 'increase'] = 'error',
         reserved_ratio: float = 0.1
 ):
@@ -2822,6 +2886,8 @@ def check_capacity_sufficiency(
     facilities : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with (Geo)DataFrames, containing info about
         facilities for every available activity.
+    v : Variables
+        Variables for population pipeline.
     action_on_lacking_capacity : Literal['error', 'warn', 'increase'], optional
         What to do, if capacity of some activity's facilities is potentially
         insufficient:
@@ -2883,6 +2949,7 @@ def handle_and_write_regular_agents(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         agents_list: List[Agent],
         h: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
+        v: Variables,
         process: int = 0,
         announce_every: int = 1000,
         report_every: int = 1000,
@@ -2908,6 +2975,8 @@ def handle_and_write_regular_agents(
     h : Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]]
         Dictionary with helper tables, loaded from input_data.py.
         Table `indices`
+    v : Variables
+        Variables for population pipeline.
     process : int, optional
         Process number, that will be appended to agent's ID. The default is 0.
     prefer_private : bool, optional
@@ -2943,7 +3012,7 @@ def handle_and_write_regular_agents(
     )  # trigger here to ensure output out of threads
 
     check_capacity_sufficiency(
-        agents_list, facilities, action_on_lacking_capacity, reserved_ratio
+        agents_list, facilities, v, action_on_lacking_capacity, reserved_ratio
     )
 
     orig_capacities = {
@@ -2973,7 +3042,7 @@ def handle_and_write_regular_agents(
                 facilities, h,
                 use_links=use_links, prefer_private=prefer_private,
                 abandon_pt=abandon_pt, include_teleported=include_teleported,
-                refiller=refiller
+                refiller=refiller, v=v
             )
         except Exception:
             agent.error = traceback.format_exc()

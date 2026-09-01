@@ -9,8 +9,9 @@ import sys
 import argparse
 import geopandas as gpd
 from pathlib import Path
-from typing import Union, Tuple, Dict, List
+from typing import Union, Tuple, Dict, List, Optional
 
+from kammat.defaults.variables import SAVE_STATE_PATH, Variables
 from kammat.input.data.load import load_data
 from kammat.input.data.types import Helpers
 from kammat.input.population.agent import (
@@ -58,6 +59,11 @@ def parse_args(
     parser.add_argument('-it', '--include-teleported', action='store_true')
     parser.add_argument('-ur', '--use-regr', action='store_true')
     parser.add_argument('-ic', '--incremental-capacity-allocation-parts', type=int)
+    parser.add_argument(
+        '-V', '--variables-path',
+        help='Path to JSON with variables for population creation',
+        default=SAVE_STATE_PATH
+    )
     args = parser.parse_args(args_list)
     return args
 
@@ -89,13 +95,21 @@ def handle_population(
         ncores: int = 1,
         sample: float = 1.0,
         pickle_path: Union[str, Path] = None,
+        variables_path: Optional[Union[str, Path]] = None,
         **kwargs
 ) -> Tuple[Dict[str, gpd.GeoDataFrame], Helpers, Dict[str, List[Agent]]]:
+    if variables_path is None:
+        v = Variables()
+    else:
+        v = Variables(reset_saved=False)
+        v.load_state(ip=variables_path)
+
     facilities, h = load_data(
         facilities_path=facilities_path,
         categories_path=categories_path,
         diaries_path=diaries_path,
         distances_path=distances_path,
+        v=v,
         clusters_path=clusters_path,
         citylog_points_path=citylog_points_path,
         freight_points_path=freight_points_path,
@@ -150,9 +164,10 @@ def handle_population(
     analyze_population_basic(
         agents_lists=population,
         facilities=facilities,
+        v=v,
         modal_split_save_path=modal_split_save_path,
         facilities_counts_save_directory=facilities_counts_save_path,
-        relational_matrices_save_directory=relational_matrices_save_directory
+        relational_matrices_save_directory=relational_matrices_save_directory,
     )
     return facilities, h, population
 
@@ -187,5 +202,6 @@ if __name__ == '__main__':
         include_teleported=args.include_teleported,
         pickle_path=args.pickle_path,
         oneway_flows_path=args.oneway_flows_path,
-        incremental_capacity_allocation_parts=args.incremental_capacity_allocation_parts
+        incremental_capacity_allocation_parts=args.incremental_capacity_allocation_parts,
+        variables_path=args.variables_path
     )

@@ -25,7 +25,8 @@ from kammat.defaults.variables import Variables
 def check_activities_statistic_columns_sets(
         table: pd.DataFrame,
         columns: List[str],
-        activities: List[str]
+        activities: List[str],
+        v: Variables
         ) -> List[str]:
     """
     Check, if there are all statistic columns to draw value from Weibull
@@ -41,6 +42,8 @@ def check_activities_statistic_columns_sets(
         (``check_columns``) and don't contain obligatory static or dynamic cols
     activities : List[str]
         All lower case activities occuring in diaries
+    v : Variables
+        Variables for population pipeline.
 
     Raises
     ------
@@ -54,7 +57,6 @@ def check_activities_statistic_columns_sets(
         List of unexpected columns, including redundant ones
 
     """
-    v = Variables()
     colstats = {
         'missing': [],
         'found': [],
@@ -97,6 +99,7 @@ def load_distances(
         categories: List[str],
         activities: List[str],
         spatial_units: Dict[str, List[str]],
+        v: Variables,
         target_spatial_units: Dict[str, List[str]] = None
         ) -> Distances:
 
@@ -121,7 +124,7 @@ def load_distances(
     precision = fix_spatial_precisions(table)
 
     unexpected = check_activities_statistic_columns_sets(
-        table, columns=dcols['unexpected'], activities=activities)
+        table, columns=dcols['unexpected'], activities=activities, v=v)
 
     if unexpected:
         table.drop(unexpected, axis=1, inplace=True)

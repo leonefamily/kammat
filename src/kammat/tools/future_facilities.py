@@ -11,12 +11,11 @@ import geopandas as gpd
 from pathlib import Path
 from shapely.ops import unary_union
 from shapely.geometry import Point, Polygon
-from typing import List, Literal, Union, Dict, Tuple
+from typing import List, Literal, Union, Dict, Tuple, Optional
 from kammat.defaults.variables import Variables
 from kammat.defaults.constants import SPATIAL_LEVELS_LIST
 
 ACTIONS = ['add', 'create']
-v = Variables()
 
 
 def get_random_points(
@@ -53,6 +52,7 @@ def get_random_points(
 def create_new_facilities(
         grid: gpd.GeoDataFrame,
         spatial_units: gpd.GeoDataFrame,
+        v: Variables,
         max_points_per_tile: int = 9,
         action: Literal[ACTIONS] = 'add',
         current_inhabitants_column: str = 'OB_S',
@@ -71,6 +71,8 @@ def create_new_facilities(
     spatial_units : gpd.GeoDataFrame
         GeoDataFrame with spatial units geometries and descriptions
         (zone, area etc..)
+    v : Variables
+        Variables for population pipeline.
     max_points_per_tile : int, optional
         How many points appear within each grid tile. The default is 9.
     action : Literal[ACTIONS], optional
@@ -162,6 +164,7 @@ def reduce_capacity(
         grid: gpd.GeoDataFrame,
         new_facilities: gpd.GeoDataFrame,
         negative_change: Tuple[gpd.GeoDataFrame, Dict[str, Dict[int, int]]],
+        v: Variables,
         reduce_outside: bool = True,
         buffer_step: Union[int, float] = 100,
         buffer_threshold: Union[int, float] = 1000
@@ -178,6 +181,8 @@ def reduce_capacity(
     negative_change : Tuple[gpd.GeoDataFrame, Dict[str, Dict[int, int]]]
         Dictionary with negative numbers for each activity whose capacity
         to be reduced.
+    v : Variables
+        Variables for population pipeline.
     reduce_neighbors : bool, optional
         Whether to try to reduce capacities in neighboring grids, if original
         grid doesn't have enough capacity to remove. The default is True.
@@ -249,6 +254,7 @@ def handle_new_facilities(
         max_points_per_tile: int = 9,
         action: Literal[ACTIONS] = 'add',
         old_facilities_path: Union[str, Path] = None,
+        variables_path: Optional[Union[str, Path]] = None,
         current_inhabitants_column: str = 'OB_S',
         future_inhabitants_column: str = 'OB_K',
         current_workplaces_column: str = 'PM_S',
@@ -274,6 +280,8 @@ def handle_new_facilities(
         The default is 'add'.
     old_facilities_path : Union[str, Path], optional
         Path to existing facilities. New will be appended. The default is None.
+    variables_path : Optional[Union[str, Path]], optional
+        Path to variables JSON for population pipeline
     current_inhabitants_column : str, optional
         Grid GeoDataFrame column. The default is 'OB_S'.
     future_inhabitants_column : str, optional
@@ -286,11 +294,18 @@ def handle_new_facilities(
         Random seed for reproducing the same results. The default is None.
 
     """
+    if variables_path is None:
+        v = Variables()
+    else:
+        v = Variables(reset_saved=False)
+        v.load_state(ip=variables_path)
+
     grid = gpd.read_file(grid_path)
     spatial_units = gpd.read_file(spatial_units_path)
     new_facilities, negative_change = create_new_facilities(
         grid=grid,
         spatial_units=spatial_units,
+        v=v,
         max_points_per_tile=max_points_per_tile,
         action=action,
         current_inhabitants_column=current_inhabitants_column,
@@ -305,6 +320,6 @@ def handle_new_facilities(
             pd.concat([old_facilities, new_facilities]), crs=grid.crs
             )
     reduce_capacity(
-        grid, new_facilities, negative_change, reduce_neighbors=True
-        )
+        grid, new_facilities, negative_change, reduce_neighbors=True, v=v
+    )
     new_facilities.to_file(new_facilities_save_path, encoding='utf-8')

@@ -183,6 +183,9 @@ def get_full_layout(
          sg.Input('', key='-EPOPPATH-', expand_x=True),
          sg.FileBrowse(key='-EPOP-', size=6)],
         [sg.HorizontalSeparator(color='grey')],
+        [sg.Text('Variables path', size=15),
+         sg.Input('', key='-VARSPATH-', expand_x=True),
+         sg.FileBrowse(key='-VARS-', size=6)],
         [sg.Checkbox('Write teleported modes', default=False, key='-WRITETP-')],
         [sg.Text('Population fraction', size=15),
          sg.Slider(range=(0.01, 1), orientation='h', resolution=0.01,
@@ -609,6 +612,7 @@ def check_validity(
     else:
         vvs['population']['launch'] = True
         vvs['population']['existing'] = False
+        vvs['population']['variables_path'] = values['-VARSPATH-']
         vvs['population']['include_teleported'] = values['-WRITETP-']
         vvs['population']['xml_path'] = wd_population / 'population.xml.gz'
         vvs['population']['csv_path'] = None # wd_population / 'population.csv'
