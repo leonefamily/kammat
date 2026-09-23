@@ -555,7 +555,6 @@ def check_validity(
         if vvs['network']['nettype'] == 'generic':
             vvs['network']['restrict_uturns'] = values['-UTURNS-']
         elif vvs['network']['nettype'] == 'ceda':
-            vvs['network']['ncores'] = int(values['-THREADS-'])
             if values['-LCONPATH-']:
                 vvs['network']['lane_connections_path'] = values['-LCONPATH-']
                 vvs['network']['lane_definitions_save_path'] = wd_net / 'lane_definitions.xml'

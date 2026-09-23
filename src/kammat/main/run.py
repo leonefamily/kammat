@@ -9,20 +9,31 @@ Created on Tue May  7 18:18:04 2024
 import sys
 import inspect
 import argparse
+import threading
 from pathlib import Path
 import subprocess
 import logging
-from typing import List, Dict, Union, Any, Optional
+from typing import List, Dict, Union, Any, Optional, IO
 
 from kammat.defaults.constants import (
     LOGGER_FORMAT, CACHE_SETTINGS_PATH, PathPointer
 )
 from kammat.main.configure import (
-    load_config, validate_config, Config
+    load_config, validate_config, Config,
+    default_run_config, default_run_directories,
+    populate_default_config, validate_path,
+    save_config
 )
 from kammat.model.utils import (
     get_matsim_version, get_matsim_runnable_class
 )
+
+logging.basicConfig(
+    format=LOGGER_FORMAT,
+    level=logging.INFO
+)
+
+logger = logging.getLogger('run')
 
 
 def create_directory(
@@ -53,29 +64,54 @@ def report(
             return False
 
 
+def read_stream(
+        stream: IO[Any],
+        save_log: bool = False):
+    try:
+        while True:
+            line = stream.readline()
+            if not line:
+                break
+            print(line.rstrip())
+            if save_log:
+                with open(CACHE_SETTINGS_PATH + '/log.txt', 'a') as f:
+                    f.write(str(line) + '\n')
+    finally:
+        stream.close()
+
+
 def run_command(
         command: str,
         stage: str,
         save_log: str = None
 ):
-    report(CACHE_SETTINGS_PATH + '/current_stage', content=stage)
+    report(CACHE_SETTINGS_PATH + '/current_stage', content=stage, mode='w')
     proc = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True,
+        text=True
     )
-    print(command)
-    output, error = proc.communicate()
-    if save_log:
-        with open(CACHE_SETTINGS_PATH + '/log.txt', 'w') as f:
-            for line in iter(proc.stdout.readline, b''):
-                print(line.rstrip())
-                f.write(str(line))
-        proc.stdout.close()
-    report(CACHE_SETTINGS_PATH + '/last_stage', content=stage)
-    if proc.returncode != 0:
-        report(CACHE_SETTINGS_PATH + '/current_stage', content='failed')
-        raise RuntimeError(
-            f"{stage} stage returned error code {proc.returncode}: {error}"
-        )
+    logging.info(command)
+    threads = []
+    if proc.stdout:
+        t_out = threading.Thread(target=read_stream, args=(proc.stdout, save_log))
+        t_out.daemon = True
+        threads.append(t_out)
+        t_out.start()
+    if proc.stderr:
+        t_err = threading.Thread(target=read_stream, args=(proc.stderr, save_log))
+        t_err.daemon = True
+        threads.append(t_err)
+        t_err.start()
+    return_code = proc.wait()
+    report(CACHE_SETTINGS_PATH + '/last_stage', content=stage, mode='w')
+    if return_code != 0:
+        report(CACHE_SETTINGS_PATH + '/current_stage', content='failed', mode='w')
+        raise RuntimeError(f"{stage} stage returned error code {return_code}")
+    else:
+        report(CACHE_SETTINGS_PATH + '/current_stage', content='', mode='w')
 
 
 def run_network(
@@ -223,23 +259,35 @@ def run_gis(
 
 
 def main(
-        config_path: Union[str, Path]
+        config_path: Optional[Union[str, Path]] = None,
+        default_config_save_path: Optional[Union[str, Path]] = None,
+        default_config_parent: Optional[Union[str, Path]] = None
 ):
-    functions = {
-        "network": run_network,
-        "pt": run_pt,
-        "population": run_population,
-        "config": run_config,
-        "model": run_model,
-        "analysis": run_analysis,
-        "comparison": run_comparison,
-        "gis": run_gis
-    }
-    config = load_config(p=config_path)
-    stages = validate_config(config=config)
-    print(f"Stages to run: {stages}")
-    for stage in stages:
-        functions[stage](config)  # run corresponding function
+    if default_config_save_path is not None:
+        validate_path(p=Path(default_config_save_path).parent)
+        if default_config_parent is not None:
+            config = default_run_config(parent=default_config_parent)
+        else:
+            config = default_run_config()
+        save_config(config=config, p=default_config_save_path)
+
+    if config_path is not None:
+        functions = {
+            "network": run_network,
+            "pt": run_pt,
+            "population": run_population,
+            "config": run_config,
+            "model": run_model,
+            "analysis": run_analysis,
+            "comparison": run_comparison,
+            "gis": run_gis
+        }
+        config = load_config(p=config_path)
+        stages = validate_config(config=config)
+        default_run_directories(parent=config['wd']['root'], create=True, exist_ok=True)
+        logging.info(f"Stages to run: {stages}")
+        for stage in stages:
+            functions[stage](config)  # run corresponding function
 
 
 def parse_args(
@@ -247,8 +295,16 @@ def parse_args(
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '-c', '--config-path', required=True,
-        help='JSON configuration file for the framework'
+        '-c', '--config-path',
+        help='JSON configuration file for the framework. Launches the run'
+    )
+    parser.add_argument(
+        '-d', '--default-config-save-path',
+        help='Save default JSON configuration file for the framework'
+    )
+    parser.add_argument(
+        '-p', '--default-config-parent',
+        help='Parent for default config creation - prepends any parent-dependent path'
     )
     if args_list is None:
         return parser.parse_args(sys.argv[1:])
@@ -265,5 +321,7 @@ if __name__ == '__main__':
     )
     args = parse_args()
     main(
-        config_path=args.config_path
+        config_path=args.config_path,
+        default_config_save_path=args.default_config_path,
+        default_config_parent=args.default_config_parent
     )

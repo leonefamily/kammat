@@ -1109,7 +1109,6 @@ def prepare_ceda_network(
         nodes_save_path: Union[str, Path],
         lane_connections_path: Union[str, Path] = None,
         lane_definitions_save_path: Union[str, Path] = None,
-        ncores: int = 1,
         internal_maneuvers: bool = True,
         common_lane: bool = True
 ):
@@ -1142,10 +1141,6 @@ def prepare_ceda_network(
             )
 
         newdigraph, turnsgraph = check_restrictions_integrity(digraph, restrictions_nds)
-        # newdigraph = remove_restricted_connections(
-        #     digraph, restrictions_ids, restrictions_nds, uturn_fork_dilanes, ncores
-        #     )
-
         newdilanes = correct_lane_definitions(dilanes, newdigraph)
     else:
         newdilanes = {}
@@ -1180,9 +1175,10 @@ def parse_args(
     parser.add_argument('-e', '--edges-save-path')
     parser.add_argument('-N', '--nodes-save-path')
     parser.add_argument('-L', '--lane-definitions-save-path')
-    parser.add_argument('-C', '--ncores', type=int, default=1)
+    parser.add_argument('-C', '--ncores', type=int, default=1)  # for compatibility, does nothing here
     parser.add_argument('-S', '--separate-lanes', action='store_true')
     parser.add_argument('-i', '--internal-maneuvers', action='store_true')
+    parser.add_argument('-u', '--restrict-uturns', action='store_true')  # for compatibility, does nothing here
     args = parser.parse_args(args_list)
     return args
 
@@ -1196,7 +1192,6 @@ if __name__ == '__main__':
         edges_save_path=args.edges_save_path,
         nodes_save_path=args.nodes_save_path,
         lane_definitions_save_path=args.lane_definitions_save_path,
-        ncores=args.ncores,
         internal_maneuvers=args.internal_maneuvers,
         common_lane=not args.separate_lanes
         )

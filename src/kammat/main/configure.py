@@ -7,18 +7,20 @@ Created on Tue May  7 18:05:36 2024
 """
 
 import json
+import os
+import sys
 from pathlib import Path
-from typing import Dict, List, Union, Any, Optional
-from kammat.defaults.constants import (
-    STAGES_ARGUMENTS
-)
+from dataclasses import fields
+from typing import Dict, Union, List, Optional, Any
+from kammat.defaults.constants import DEFAULT_DIRECTORIES, STAGES_ARGUMENTS, C, PurePath
 
-Config = Dict[str, Dict[str, Union[str, int, float, bool]]]
+
+Config = Dict[str, Dict[str, Union[str, Path, int, float, bool]]]
 
 
 def load_config(
         p: Union[Path, str]
-) -> Dict[str, Any]:
+) -> Config:
     """
     Load JSON configuration for this framework.
 
@@ -37,6 +39,27 @@ def load_config(
     with open(p, mode='r', encoding='utf-8') as fp:
         config = json.load(fp)
     return config
+
+
+def save_config(
+        config: Config,
+        p: Union[Path, str]
+):
+    """
+    Load JSON configuration for this framework.
+
+    Does not (yet) guarantee that the structure is correct.
+
+    Parameters
+    ----------
+    config : Dict[str, Any]
+        Config dictionary
+    p : Union[Path, str]
+        Path to save the JSON file.
+
+    """
+    with open(p, mode='w', encoding='utf-8') as fp:
+        json.dump(config, fp=fp, indent=4, default=str)  # if Path or other non-standard class, saves as str
 
 
 def ensure_is_file(
@@ -151,237 +174,239 @@ def validate_config(
 
     main_net_path = None
     if 'network' in stages:
-        main_net_path = Path(config['network']['net_save_path']).resolve()
-        ensure_is_file(
-            main_net_path, check_exists=True, expl='newtork/net_save_path'
-        )
-    if 'pt' in stages:
-        pt_net_path = Path(config['pt']['net_path']).resolve()
-        ensure_is_file(
-            pt_net_path, check_exists=True, expl='pt/net_path'
-        )
-        if main_net_path is not None and pt_net_path != main_net_path:
-            raise RuntimeError(
-                'newtork/net_save_path is not equal to pt/net_path'
+        if config['network']['existing']:
+            main_net_path = Path(config['network']['net_save_path']).resolve()
+            ensure_is_file(
+                main_net_path, check_exists=True, expl='newtork/net_save_path'
             )
 
-        out_pt_net_path = Path(config['pt']['output_net_path']).resolve()
-        ensure_is_file(
-            out_pt_net_path, check_parent_exists=True, expl='pt/output_net_path'
-        )
-        main_net_path = out_pt_net_path
-
     # !!! TODO more checks
-
     return stages
 
-    # # Network
-    # net_keys = set(
-    #     inspect.getargs(prepare_generic_network.__code__).args +
-    #     inspect.getargs(prepare_ceda_network.__code__).args
-    # )
-    # if values['-USENET-']:
-    #     enet = Path(values['-ENETPATH-'])
-    #     try:
-    #         nvvs = load_run_settings(enet.parent.parent / 'settings.json')
-    #         for key, value in nvvs['network'].items():
-    #             vvs['network'][key] = value
-    #         msgs['info'].append('Using existing network')
-    #     except FileNotFoundError:
-    #         msgs['warning'].append(
-    #             'Using existing network, but the structure of files does not '
-    #             'seem to correspond with this framework. Continuing anyways, '
-    #             'but some analyses will not be possible - e.g. merging with '
-    #             'original shapefile, intensities comparison etc.'
-    #         )
-    #         for key in net_keys:
-    #             vvs['network'][key] = None
-    #     vvs['network']['net_save_path'] = enet
-    #     vvs['network']['existing'] = True
-    # else:
-    #     vvs['network']['shp_path'] = Path(values['-NETPATH-'])
-    #     vvs['network']['nettype'] = 'generic' if values['-NETGEN-'] else 'ceda'
-    #     if vvs['network']['nettype'] == 'generic':
-    #         vvs['network']['restrict_uturns'] = values['-UTURNS-']
-    #     elif vvs['network']['nettype'] == 'ceda':
-    #         vvs['network']['ncores'] = int(values['-THREADS-'])
-    #         if values['-LCONPATH-']:
-    #             vvs['network']['lane_connections_path'] = values['-LCONPATH-']
-    #             vvs['network']['lane_definitions_save_path'] = wd_net / 'lane_definitions.xml'
-    #         else:
-    #             vvs['network']['lane_connections_path'] = None
-    #             vvs['network']['lane_definitions_save_path'] = None
-    #         vvs['network']['internal_maneuvers'] = values['-SIMPLEINT-']
-    #     vvs['network']['edges_save_path'] = wd_net / 'edges.shp'
-    #     vvs['network']['nodes_save_path'] = wd_net / 'nodes.shp'
-    #     vvs['network']['net_save_path'] = wd_net / 'net.xml'
 
-    #     vvs['network']['existing'] = False
+def default_run_directories(
+        parent: Union[str, Path],
+        create: bool = False,
+        exist_ok: bool = False
+) -> Dict[str, Path]:
+    parent_path = Path(parent).resolve()
+    # subfolders must be placed after respective parents
+    # so they are created after parents already exist
+    dirs = {
+        'root': parent_path,
+        'network': parent_path / DEFAULT_DIRECTORIES['network'],
+        'population': parent_path / DEFAULT_DIRECTORIES['population'],
+        'model': parent_path / DEFAULT_DIRECTORIES['model'],
+        'analysis': parent_path / DEFAULT_DIRECTORIES['analysis'],
+        'comparison': parent_path / DEFAULT_DIRECTORIES['comparison'],
+        'nodes': parent_path / DEFAULT_DIRECTORIES['nodes'],
+        'links': parent_path / DEFAULT_DIRECTORIES['links'],
+        'road_links': parent_path / DEFAULT_DIRECTORIES['road_links'],
+        'pt_links': parent_path / DEFAULT_DIRECTORIES['pt_links']
+    }
+    if create:
+        parent_path.mkdir(exist_ok=exist_ok)
+        for name, path in dirs.items():
+            path.mkdir(exist_ok=exist_ok)
+    return dirs
 
-    # # Public transport, schedules, vehicles
-    # if values['-GTFSPATH-'] and not values['-USENET-']:
-    #     vvs['pt']['gtfs_folder'] = values['-GTFSPATH-']
-    #     vvs['pt']['output_schedule_path'] = wd_net / 'schedule.xml'
-    #     vvs['pt']['output_vehicles_path'] = wd_net / 'vehicles.xml'
-    # else:
-    #     msgs['info'].append('Using existing schedule and vehicles')
-    #     vvs['pt']['gtfs_folder'] = None
-    #     vvs['pt']['output_schedule_path'] = None
-    #     vvs['pt']['output_vehicles_path'] = None
-    # vvs['pt']['number_of_threads'] = int(values['-THREADS-'])
-    # vvs['pt']['net_path'] = vvs['network']['net_save_path']
-    # vvs['pt']['output_net_path'] = vvs['network']['net_save_path']
 
-    # # Population
-    # pop_keys = inspect.getargs(handle_population.__code__).args
-    # if values['-USEPOP-']:
-    #     epop = Path(values['-EPOPPATH-'])
-    #     try:
-    #         pvvs = load_run_settings(epop.parent.parent / 'settings.json')
-    #         for key, value in pvvs['population'].items():
-    #             vvs['population'][key] = value
-    #         msgs['info'].append('Using existing population')
-    #     except FileNotFoundError:
-    #         msgs['warning'].append(
-    #             'Using existing population, but the structure of files does not '
-    #             'seem to correspond with this framework. Continuing anyways, '
-    #             'but some analyses will not be possible - e.g. merging with '
-    #             'original shapefile, intensities comparison etc.'
-    #         )
-    #         for key in pop_keys:
-    #             vvs['population'][key] = None
-    #     vvs['population']['xml_path'] = epop
-    #     vvs['population']['existing'] = True
-    # else:
-    #     vvs['population']['existing'] = False
-    #     vvs['population']['include_teleported'] = values['-WRITETP-']
-    #     vvs['population']['use_regr'] = values['-USEREGR-']
-    #     vvs['population']['xml_path'] = wd_population / 'population.xml'
-    #     vvs['population']['csv_path'] = wd_population / 'population.csv'
-    #     vvs['population']['pickle_path'] = wd_population / 'population.zx'
-    #     vvs['population']['facilities_path'] = values['-POPPATH-']
-    #     vvs['population']['categories_path'] = values['-CATPATH-']
-    #     vvs['population']['diaries_path'] = values['-DIARPATH-']
-    #     vvs['population']['distances_path'] = values['-DISTPATH-']
-    #     vvs['population']['clusters_path'] = values['-CLUSTPATH-']
-    #     vvs['population']['citylog_points_path'] = values['-CLOGSPATH-']
-    #     vvs['population']['freight_points_path'] = values['-FREPATH-']
-    #     vvs['population']['transit_points_path'] = values['-TRANPATH-']
-    #     vvs['population']['staying_path'] = values['-STAYPATH-']
-    #     vvs['population']['target_probabilities_path'] = values['-TARGPATH-']
-    #     vvs['population']['time_courses_path'] = values['-TCOURPATH-']
-    #     vvs['population']['city_logistics_path'] = values['-CLOGPATH-']
-    #     vvs['population']['times_path'] = values['-TIMEPATH-']
-    #     vvs['population']['modal_split_path'] = values['-MSPATH-']
-    #     vvs['population']['indices_path'] = values['-INDPATH-']
-    #     vvs['population']['relations_path'] = values['-RELPATH-']
-    #     vvs['population']['stops_path'] = values['-STOPPATH-']
-    #     vvs['population']['sample'] = values['-POPFRAC-']
-    #     vvs['population']['modal_split_save_path'] = wd_population / 'modal_split.csv'
-    #     vvs['population']['facilities_counts_save_path'] = wd_population / 'facilities_counts.shp'
-    #     vvs['population']['relational_matrices_save_directory'] = wd_population / 'relations'
-    # vvs['population']['ncores'] = int(values['-THREADS-'])
+def validate_path(
+        p: Optional[Union[str, Path, PurePath]]
+) -> Optional[Path]:
+    if p is None:
+        return None
+    if not Path(PurePath(p)).exists():
+        raise ValueError('File/directory does not exist')
+    return Path(p)
 
-    # # Configuration
-    # vvs['config']['net_path'] = vvs['network']['net_save_path']
-    # vvs['config']['population_path'] = vvs['population']['xml_path']
-    # vvs['config']['number_of_threads'] = int(values['-THREADS-'])
-    # vvs['config']['last_iteration'] = int(values['-ITERS-'] - 1)
-    # vvs['config']['output_config_path'] = wd / 'config.xml'
-    # vvs['config']['matsim_output_directory'] = run_dir
-    # vvs['config']['schedule_path'] = vvs['pt']['output_schedule_path']
-    # vvs['config']['vehicles_path'] = vvs['pt']['output_vehicles_path']
-    # vvs['config']['lane_definitions_path'] = (
-    #     vvs['network']['lane_definitions_save_path']
-    #     if 'lane_definitions_save_path' in vvs['network'] else None
-    # )
-    # vvs['config']['write_events_interval'] = vvs['config']['last_iteration']
-    # vvs['config']['disable_innovations_after_fraction'] = values['-MUTFRAC-']
-    # vvs['config']['mutation_range'] = values['-TIMEMUT-'] * 60
 
-    # # Model
-    # vvs['model']['launch'] = values['-RUNMOD-']
-    # vvs['model']['executable_path'] = values['-MATSIMPATH-']
-    # vvs['model']['config_path'] = vvs['config']['output_config_path']
-    # vvs['model']['ram_limit'] = f"{int(values['-MATSIMRAM-'])}m"
+def default_run_config(
+        parent: Union[str, Path] = os.path.curdir
+) -> Dict[str, Dict[str, Optional[Union[str, Path, int, float, bool]]]]:
+    parent_path = Path(parent).resolve()
 
-    # # Analysis
-    # vvs['analysis']['launch'] = values['-ANALYZE-'] if values['-RUNMOD-'] else False
-    # vvs['analysis']['events_path'] = vvs['config']['matsim_output_directory'] / 'output_events.xml.gz'
-    # vvs['analysis']['net_path'] = vvs['config']['matsim_output_directory'] / 'output_network.xml.gz'
-    # vvs['analysis']['output_counts_path'] = an_dir / 'counts.json'
-    # vvs['analysis']['output_turns_path'] = an_dir / 'turns.json'
-    # vvs['analysis']['output_net_counts_path'] = an_dir / 'counts.shp'
-    # vvs['analysis']['schedule_path'] = vvs['config']['schedule_path']
-    # vvs['analysis']['output_pt_counts_path'] = an_dir / 'pt.json'
-    # vvs['analysis']['output_pt_net_counts_path'] = an_dir / 'pt.shp'
-    # vvs['analysis']['output_pt_stops_counts_path'] = an_dir / 'pt_stops.shp'
-    # vvs['analysis']['links_nodes_groups'] = values['-LINKGROUPS-'] if values['-LINKGROUPS-'] else None
-    # vvs['analysis']['output_ribbon_diagrams_directory'] = rd_dir
-    # vvs['analysis']['road_links_ids'] = values['-LINKINTENS-'] if values['-LINKINTENS-'] else None
-    # vvs['analysis']['output_road_links_intensities_directory'] = rl_dir
-    # vvs['analysis']['pt_links_ids'] = values['-PTLINKINTENS-'] if values['-PTLINKINTENS-'] else None
-    # vvs['analysis']['output_pt_links_intensities_directory'] = ptl_dir
-    # vvs['analysis']['output_pt_lines_intensities_directory'] = ptl_dir
-    # vvs['analysis']['pt_lines_ids'] = values['-PTLINEINTENS-'] if values['-LINKGROUPS-'] else None
-    # vvs['analysis']['cordon_poly_path'] = values['-CORDPOLYPATH-'] if values['-CORDPOLYPATH-'] else None
-    # vvs['analysis']['output_cordon_stats_path'] = an_dir / 'cordons_stats.shp'
-    # vvs['analysis']['volume_poly_path'] = values['-VOLPOLYPATH-'] if values['-VOLPOLYPATH-'] else None
-    # vvs['analysis']['output_volume_stats_path'] = an_dir / 'volume_stats.shp'
+    config: Dict[str, Any] = {
+        'wd': default_run_directories(parent=parent_path, create=False)
+    }
 
-    # # Comparison
-    # vvs['comparison']['launch'] = values['-COMPARE-'] if values['-ANALYZE-'] else False
-    # vvs['comparison']['orig_net_path'] = vvs['network']['shp_path']
-    # vvs['comparison']['edge_net_path'] = vvs['network']['edges_save_path']
-    # vvs['comparison']['net_counts_path'] = vvs['analysis']['output_net_counts_path']
-    # vvs['comparison']['network_intensities_path'] = values['-NINTPATH-'] if values['-NINTPATH-'] else None
-    # vvs['comparison']['network_differences_save_path'] = comp_dir / 'network_differences.shp'
-    # vvs['comparison']['network_differences_stats_save_path'] = comp_dir / 'network_differences.csv'
-    # vvs['comparison']['intersection_intensities_path'] = values['-IINTPATH-'] if values['-IINTPATH-'] else None
-    # vvs['comparison']['intersection_differences_save_path'] = comp_dir / 'intersection_differences.shp'
-    # vvs['comparison']['intersection_differences_stats_save_path'] = comp_dir / 'intersection_differences.csv'
-    # vvs['comparison']['difference_thresh'] = 0.25
-    # vvs['comparison']['diff_net_counts_save_path'] = comp_dir / 'prev_model_network_differences.shp'
-    # vvs['comparison']['diff_pt_net_counts_save_path'] = comp_dir / 'prev_model_pt_network_differences.shp'
-    # vvs['comparison']['diff_pt_stops_counts_save_path'] = comp_dir / 'prev_model_pt_stops_differences.shp'
-    # pmod = Path(values['-PMODPATH-'])
-    # try:
-    #     cvvs = load_run_settings(pmod / 'settings.json')
-    #     vvs['comparison']['prev_net_counts_path'] = cvvs['analysis']['output_net_counts_path']
-    #     vvs['comparison']['prev_pt_net_counts_path'] = cvvs['analysis']['output_pt_net_counts_path']
-    #     vvs['comparison']['prev_pt_stops_counts_path'] = cvvs['analysis']['output_pt_stops_counts_path']
-    #     vvs['comparison']['pt_net_counts_path'] = vvs['analysis']['output_pt_net_counts_path']
-    #     vvs['comparison']['pt_stops_counts_path'] = vvs['analysis']['output_pt_stops_counts_path']
-    # except FileNotFoundError:
-    #     msgs['warning'].append(
-    #         'Using existing population, but the structure of files does not '
-    #         'seem to correspond with this framework. Continuing anyways, '
-    #         'but some analyses will not be possible - e.g. merging with '
-    #         'original shapefile, intensities comparison etc.'
-    #     )
-    #     vvs['comparison']['prev_net_counts_path'] = None
-    #     vvs['comparison']['prev_pt_net_counts_path'] = None
-    #     vvs['comparison']['prev_pt_stops_counts_path'] = None
-    # vvs['comparison']['pt_net_counts_path'] = vvs['analysis']['output_pt_net_counts_path']
-    # vvs['comparison']['pt_stops_counts_path'] = vvs['analysis']['output_pt_stops_counts_path']
+    for stage in STAGES_ARGUMENTS:
+        config[stage] = {}
+        class_name = stage if stage not in ('config', 'model') else 'matsim'
+        if hasattr(C, class_name):
+            dc_class = getattr(C, class_name)
+            dc_fields = {f.name for f in fields(dc_class)}
+            for param in STAGES_ARGUMENTS[stage]:
+                if param in dc_fields:
+                    val = getattr(dc_class, param)
+                    if isinstance(val, PurePath):
+                        config[stage][param] = parent_path / val
+                    else:
+                        config[stage][param] = val
+                elif param == 'launch':
+                    config[stage][param] = True
+                elif param == 'existing':
+                    config[stage][param] = False
+                else:
+                    config[stage][param] = None  # not in C -> None
+    config['pt']['net_path'] = config['network']['net_save_path']
+    config['pt']['output_net_path'] = config['network']['net_save_path']  # it'll save changed file at the same place
+    config['population']['ncores'] = C.kammat.cpu_threads
+    config['config']['net_path'] = config['network']['net_save_path']
+    config['config']['lane_definitions_path'] = config['network']['lane_definitions_save_path']
+    config['config']['population_path'] = config['population']['xml_path']
+    config['config']['schedule_path'] = config['pt']['output_schedule_path']
+    config['config']['vehicles_path'] = config['pt']['output_vehicles_path']
+    config['config']['output_config_path'] = config['model']['config_path']
+    config['model']['ram_limit'] = C.matsim.ram_limit_str
+    config['comparison']['edge_net_path'] = config['network']['edges_save_path']
+    config['comparison']['net_counts_path'] = config['analysis']['output_net_counts_path']
+    config['comparison']['pt_net_counts_path'] = config['analysis']['output_pt_net_counts_path']
+    config['comparison']['pt_stops_counts_path'] = config['analysis']['output_pt_stops_counts_path']
+    config['gis']['input_facilities'] = config['population']['facilities_counts_save_path']
+    config['gis']['input_edges'] = config['network']['edges_save_path']
+    config['gis']['input_nodes'] = config['network']['nodes_save_path']
+    config['gis']['output_road_counts'] = config['analysis']['output_net_counts_path']
+    config['gis']['output_pt_counts'] = config['analysis']['output_pt_net_counts_path']
+    config['gis']['output_pt_stops'] = config['analysis']['output_pt_stops_counts_path']
+    config['gis']['output_cordons_stats'] = config['analysis']['output_cordon_stats_path']
+    config['gis']['output_volumes_stats'] = config['analysis']['output_volume_stats_path']
+    config['gis']['comparison_rw_road_diffs'] = config['comparison']['network_differences_save_path']
+    config['gis']['comparison_rw_road_intersection_diffs'] = config['comparison']['intersection_differences_save_path']
+    config['gis']['comparison_model_road_diffs'] = config['comparison']['diff_net_counts_save_path']
+    config['gis']['comparison_model_pt_diffs'] = config['comparison']['diff_pt_net_counts_save_path']
+    config['gis']['comparison_model_pt_stops_diffs'] = config['comparison']['diff_pt_stops_counts_save_path']
+    return config
 
-    # # GIS project
-    # vvs['gis']['launch'] = values['-QGIS-']
-    # vvs['gis']['qgis_path'] = values['-QGISPATH-']
-    # vvs['gis']['project_path'] = wd / 'view.qgs'
-    # vvs['gis']['input_facilities'] = vvs['population']['facilities_counts_save_path']
-    # vvs['gis']['input_edges'] = vvs['network']['edges_save_path']
-    # vvs['gis']['input_nodes'] = vvs['network']['nodes_save_path']
-    # vvs['gis']['output_road_counts'] = vvs['analysis']['output_net_counts_path']
-    # vvs['gis']['output_pt_counts'] = vvs['analysis']['output_pt_net_counts_path']
-    # vvs['gis']['output_pt_stops'] = vvs['analysis']['output_pt_stops_counts_path']
-    # vvs['gis']['output_cordons_stats'] = vvs['analysis']['output_cordon_stats_path']
-    # vvs['gis']['output_volumes_stats'] = vvs['analysis']['output_volume_stats_path']
-    # vvs['gis']['comparison_rw_road_diffs'] = vvs['comparison']['network_differences_save_path']
-    # vvs['gis']['comparison_rw_road_intersection_diffs'] = vvs['comparison']['intersection_differences_save_path']
 
-    # return vvs, msgs
+def populate_default_config(
+        parent: Union[str, Path] = os.path.curdir,
+        net_shp_path: Optional[Union[str, Path]] = None,
+        net_lane_connections_path: Optional[Union[str, Path]] = None,
+        net_type: str = C.network.nettype,
+        net_restrict_uturns: bool = True,
+        net_internal_maneuvers: bool = True,
+        existing_pt_schedule_path: Optional[Union[str, Path]] = None,
+        existing_pt_vehicles_path: Optional[Union[str, Path]] = None,
+        existing_net_save_path: Optional[Union[str, Path]] = None,
+        existing_lane_definitions_save_path: Optional[Union[str, Path]] = None,
+        gtfs_path: Optional[Union[str, Path]] = None,
+        kammat_number_of_threads: int = C.kammat.cpu_threads,
+        pop_variables_path: Optional[Union[str, Path]] = None,
+        pop_include_teleported: bool = C.population.include_teleported,
+        pop_facilities_path: Optional[Union[str, Path]] = None,
+        pop_categories_path: Optional[Union[str, Path]] = None,
+        pop_diaries_path: Optional[Union[str, Path]] = None,
+        pop_distances_path: Optional[Union[str, Path]] = None,
+        pop_clusters_path: Optional[Union[str, Path]] = None,
+        pop_citylog_points_path: Optional[Union[str, Path]] = None,
+        pop_freight_points_path: Optional[Union[str, Path]] = None,
+        pop_transit_points_path: Optional[Union[str, Path]] = None,
+        pop_staying_path: Optional[Union[str, Path]] = None,
+        pop_target_probabilities_path: Optional[Union[str, Path]] = None,
+        pop_time_courses_path: Optional[Union[str, Path]] = None,
+        pop_city_logistics_path: Optional[Union[str, Path]] = None,
+        pop_times_path: Optional[Union[str, Path]] = None,
+        pop_modal_split_path: Optional[Union[str, Path]] = None,
+        pop_indices_path: Optional[Union[str, Path]] = None,
+        pop_relations_path: Optional[Union[str, Path]] = None,
+        pop_stops_path: Optional[Union[str, Path]] = None,
+        pop_oneway_flows_path: Optional[Union[str, Path]] = None,
+        pop_sample: Union[int, float] = C.population.sample,
+        pop_incremental_capacity_allocation_parts: int = C.population.incremental_capacity_allocation_parts,
+        existing_pop_xml_path: Optional[Union[str, Path]] = None,
+        matsim_number_of_threads: int = C.matsim.number_of_threads,
+        matsim_last_iteration: int = C.matsim.last_iteration,
+        matsim_scoring_parameters_path: Optional[Union[str, Path]] = None,
+        matsim_minibus_parameters_path: Optional[Union[str, Path]] = None,
+        matsim_launch: bool = False,
+        matsim_executable_path: Optional[Union[str, Path]] = None,
+        matsim_ram_limit: str = C.matsim.ram_limit,
+        qgis_path: Optional[Union[str, Path]] = None,
+        previous_run_config_path: Optional[Union[str, Path]] = None,
+) -> Dict[str, Dict[str, Optional[Union[str, Path, int, float]]]]:
+    parent_path = Path(parent).resolve()
+    config = default_run_config(parent=parent_path)
+    if existing_net_save_path is not None:
+        config['network']['net_save_path'] = validate_path(existing_net_save_path)
+        config['network']['lane_definitions_save_path'] = validate_path(
+            existing_lane_definitions_save_path
+        )
+        config['network']['existing'] = True
+        config['network']['launch'] = False
+    else:
+        config['network']['shp_path'] = validate_path(net_shp_path)
+        config['network']['lane_connections_path'] = validate_path(net_lane_connections_path)
+        config['network']['nettype'] = net_type
+        config['network']['restrict_uturns'] = bool(net_restrict_uturns)
+        config['network']['internal_maneuvers'] = net_internal_maneuvers
+    if gtfs_path is not None:
+        config['pt']['gtfs_folder'] = validate_path(gtfs_path)
+        config['pt']['number_of_threads'] = int(kammat_number_of_threads)
+    else:
+        config['pt']['output_schedule_path'] = validate_path(existing_pt_schedule_path)
+        config['pt']['output_vehicles_path'] = validate_path(existing_pt_vehicles_path)
 
-def create_config(
-):
-    pass
+    if existing_pop_xml_path is None:
+        config['population']['variables_path'] = validate_path(pop_variables_path)
+        config['population']['include_teleported'] = pop_include_teleported
+        config['population']['facilities_path'] = validate_path(pop_facilities_path)
+        config['population']['categories_path'] = validate_path(pop_categories_path)
+        config['population']['diaries_path'] = validate_path(pop_diaries_path)
+        config['population']['distances_path'] = validate_path(pop_distances_path)
+        config['population']['clusters_path'] = validate_path(pop_clusters_path)
+        config['population']['citylog_points_path'] = validate_path(pop_citylog_points_path)
+        config['population']['freight_points_path'] = validate_path(pop_freight_points_path)
+        config['population']['transit_points_path'] = validate_path(pop_transit_points_path)
+        config['population']['staying_path'] = validate_path(pop_staying_path)
+        config['population']['target_probabilities_path'] = validate_path(pop_target_probabilities_path)
+        config['population']['time_courses_path'] = validate_path(pop_time_courses_path)
+        config['population']['city_logistics_path'] = validate_path(pop_city_logistics_path)
+        config['population']['times_path'] = validate_path(pop_times_path)
+        config['population']['modal_split_path'] = validate_path(pop_modal_split_path)
+        config['population']['indices_path'] = validate_path(pop_indices_path)
+        config['population']['relations_path'] = validate_path(pop_relations_path)
+        config['population']['stops_path'] = validate_path(pop_stops_path)
+        config['population']['oneway_flows_path'] = validate_path(pop_oneway_flows_path)
+        config['population']['sample'] = float(pop_sample)
+        config['population']['incremental_capacity_allocation_parts'] = int(pop_incremental_capacity_allocation_parts)
+        config['population']['ncores'] = int(kammat_number_of_threads)
+    else:
+        config['population']['xml_path'] = validate_path(existing_pop_xml_path)
+        config['population']['launch'] = False
+        config['population']['existing'] = True
+    config['config']['number_of_threads'] = int(matsim_number_of_threads)
+    config['config']['last_iteration'] = int(matsim_last_iteration)
+    config['config']['scoring_parameters_path'] = validate_path(matsim_scoring_parameters_path)
+    config['config']['minibus_parameters_path'] = validate_path(matsim_minibus_parameters_path)
+    config['model']['launch'] = matsim_launch
+    if matsim_launch and matsim_executable_path is None:
+        raise ValueError('MATSim executable path is necessary when run requested')
+    config['model']['executable_path'] = validate_path(matsim_executable_path)
+    config['model']['ram_limit'] = matsim_ram_limit
+
+    if previous_run_config_path is not None:
+        prev_config = load_config(previous_run_config_path)
+        config['comparison']['prev_net_counts_path'] = validate_path(
+            prev_config['analysis']['output_net_counts_path']
+        )
+        config['comparison']['prev_pt_net_counts_path'] = validate_path(
+            prev_config['analysis']['output_pt_net_counts_path']
+        )
+        config['comparison']['prev_pt_stops_counts_path'] = validate_path(
+            prev_config['analysis']['output_pt_stops_counts_path']
+        )
+        config['comparison']['pt_net_counts_path'] = validate_path(
+            prev_config['analysis']['output_pt_net_counts_path']
+        )
+        config['comparison']['pt_stops_counts_path'] = validate_path(
+            prev_config['analysis']['output_pt_stops_counts_path']
+        )
+    if not matsim_launch:
+        config['analysis']['launch'] = matsim_launch
+        config['comparison']['launch'] = matsim_launch
+        config['gis']['launch'] = matsim_launch
+    else:
+        if not sys.platform.lower().startswith('win'):
+            config['gis']['qgis_path'] = validate_path(qgis_path)
+    return config

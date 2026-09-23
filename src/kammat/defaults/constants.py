@@ -4,10 +4,18 @@ Created on Tue Dec 13 18:17:02 2022
 
 @author: dgrishchuk
 """
+import os
+import sys
+from dataclasses import dataclass, field
+from typing import Tuple, List, Dict, Set, Callable, Union, Literal, Optional
+from pathlib import Path, PureWindowsPath, PurePosixPath
+import pandas as pd
 
-from typing import Tuple, List, Dict, Set, Callable, Union
-from pathlib import Path
-import pandas as pd 
+if sys.platform.startswith('win'):
+    PurePath = PureWindowsPath
+else:
+    PurePath = PurePosixPath
+
 
 def str_to_float(
         string: str
@@ -276,143 +284,209 @@ CACHE_SETTINGS_PATH: str = str(Path.home() / '.kammat')
 
 LOGGER_FORMAT: str = '%(asctime)s | %(levelname)s | %(name)s:%(module)s:%(lineno)d:%(funcName)s() - %(message)s'
 
-
 # %% RUNTIME
 
 STAGES_ARGUMENTS: Dict[str, List[str]] = {
-    'network': [
-        'shp_path',
-        'nettype',
-        'restrict_uturns',
-        'ncores',
-        'lane_connections_path',
-        'lane_definitions_save_path',
-        'internal_maneuvers',
-        'edges_save_path',
-        'nodes_save_path',
-        'net_save_path',
-        'existing',
-        'launch'],
-    'pt': [
-        'gtfs_folder',
-        'output_schedule_path',
-        'output_vehicles_path',
-        'number_of_threads',
-        'net_path',
-        'output_net_path',
-        'launch'
+    "network": [
+        "shp_path", "nettype", "ncores", "lane_connections_path",
+        "lane_definitions_save_path", "internal_maneuvers", "edges_save_path",
+        "nodes_save_path", "net_save_path", "existing", "launch"
     ],
-    'population': [
-        'gtfs_folder',
-        'output_schedule_path',
-        'xml_path',
-        'csv_path',
-        'pickle_path',
-        'facilities_path',
-        'categories_path',
-        'diaries_path',
-        'distances_path',
-        'clusters_path',
-        'citylog_points_path',
-        'freight_points_path',
-        'transit_points_path',
-        'staying_path',
-        'target_probabilities_path',
-        'time_courses_path',
-        'city_logistics_path',
-        'times_path',
-        'modal_split_path',
-        'relations_path',
-        'stops_path',
-        'sample',
-        'modal_split_save_path',
-        'facilities_counts_save_path',
-        'relational_matrices_save_directory',
-        'ncores',
-        'use_regr',
-        'include_teleported',
-        'existing',
-        'launch'],
-    'config': [
-        'net_path',
-        'population_path',
-        'number_of_threads',
-        'last_iteration',
-        'output_config_path',
-        'matsim_output_directory',
-        'schedule_path',
-        'vehicles_path',
-        'lane_definitions_path',
-        'write_events_interval',
-        'disable_innovations_after_fraction',
-        'mutation_range',
-        'launch'],
-    'model': [
-        'executable_path', 'config_path', 'ram_limit', 'launch'],
-    'analysis': [
-        'events_path',
-        'net_path',
-        'output_counts_path',
-        'output_turns_path',
-        'output_net_counts_path',
-        'schedule_path',
-        'output_pt_counts_path',
-        'output_pt_net_counts_path',
-        'links_nodes_groups',
-        'output_ribbon_diagrams_directory',
-        'road_links_ids',
-        'output_road_links_intensities_directory',
-        'pt_links_ids',
-        'output_pt_links_intensities_directory',
-        'pt_lines_ids',
-        'output_pt_lines_intensities_directory',
-        'cordon_poly_path',
-        'output_cordon_stats_path',
-        'volume_poly_path',
-        'output_volume_stats_path',
-        'launch'],
-    'comparison': [
-        'orig_net_path',
-        'edge_net_path',
-        'net_counts_path',
-        'network_intensities_path',
-        'network_differences_save_path',
-        'network_differences_stats_save_path',
-        'intersection_intensities_path',
-        'intersection_differences_save_path',
-        'intersection_differences_stats_save_path',
-        'difference_thresh',
-        'diff_net_counts_save_path',
-        'diff_pt_net_counts_save_path',
-        'diff_pt_stops_counts_save_path',
-        'prev_net_counts_path',
-        'prev_pt_net_counts_path',
-        'prev_pt_stops_counts_path',
-        'pt_net_counts_path',
-        'pt_stops_counts_path',
-        'pt_net_counts_path',
-        'pt_stops_counts_path',
-        'launch'],
-    'gis': [
-        'qgis_path',
-        'project_path',
-        'input_facilities',
-        'input_edges',
-        'input_nodes',
-        'output_road_counts',
-        'output_pt_counts',
-        'output_pt_stops',
-        'output_cordons_stats',
-        'output_volumes_stats',
-        'comparison_rw_road_diffs',
-        'comparison_rw_road_intersection_diffs',
-        'launch'
+    "pt": [
+        "gtfs_folder", "output_schedule_path", "output_vehicles_path",
+        "number_of_threads", "net_path", "output_net_path", "existing", "launch"
+    ],
+    "population": [
+        "facilities_path", "categories_path", "diaries_path", "distances_path",
+        "xml_path", "csv_path", "modal_split_save_path", "facilities_counts_save_path",
+        "relational_matrices_save_directory", "clusters_path", "citylog_points_path",
+        "freight_points_path", "transit_points_path", "staying_path",
+        "target_probabilities_path", "time_courses_path", "city_logistics_path",
+        "times_path", "modal_split_path", "indices_path", "relations_path",
+        "stops_path", "oneway_flows_path", "ncores", "sample", "pickle_path",
+        "existing", "launch"
+    ],
+    "config": [
+        "launch", "net_path", "population_path", "number_of_threads", "last_iteration",
+        "output_config_path", "matsim_output_directory", "schedule_path",
+        "vehicles_path", "lane_definitions_path", "write_events_interval",
+        "disable_innovations_after_fraction", "mutation_range",
+        "scoring_parameters_path", "minibus_parameters_path"
+    ],
+    "model": [
+        "launch", "executable_path", "config_path", "ram_limit", "custom_class"
+    ],
+    "analysis": [
+        "launch", "events_path", "net_path", "legs_path", "output_transfers_path",
+        "output_counts_path", "output_turns_path", "output_net_counts_path",
+        "schedule_path", "output_pt_counts_path", "output_pt_net_counts_path",
+        "output_pt_stops_counts_path", "links_nodes_groups",
+        "output_ribbon_diagrams_directory", "road_links_ids",
+        "output_road_links_intensities_directory", "pt_links_ids",
+        "output_pt_links_intensities_directory", "output_pt_lines_intensities_directory",
+        "pt_lines_ids", "cordon_poly_path", "output_cordon_stats_path",
+        "volume_poly_path", "output_volume_stats_path", "output_road_db_path",
+        "output_road_db_flush_interval"
+    ],
+    "comparison": [
+        "launch", "orig_net_path", "edge_net_path", "net_counts_path",
+        "network_intensities_path", "network_differences_save_path",
+        "network_differences_stats_save_path", "intersection_intensities_path",
+        "intersection_differences_save_path", "intersection_differences_stats_save_path",
+        "difference_thresh", "diff_net_counts_save_path", "diff_pt_net_counts_save_path",
+        "diff_pt_stops_counts_save_path", "prev_net_counts_path",
+        "prev_pt_net_counts_path", "prev_pt_stops_counts_path",
+        "pt_net_counts_path", "pt_stops_counts_path"
+    ],
+    "gis": [
+        "launch", "qgis_path", "project_path", "input_facilities",
+        "input_edges", "input_nodes", "output_road_counts", "output_pt_counts",
+        "output_pt_stops", "output_cordons_stats", "output_volumes_stats",
+        "comparison_rw_road_diffs", "comparison_rw_road_intersection_diffs",
+        "comparison_model_road_diffs", "comparison_model_pt_diffs",
+        "comparison_model_pt_stops_diffs"
     ]
 }
 
+# %% CONFIG
+
+DEFAULT_DIRECTORIES: Dict[str, str] = {
+    'network': 'network',
+    'population': 'population',
+    'relations': 'population/relations',
+    'model': 'model',
+    'analysis': 'analysis',
+    'comparison': 'comparison',
+    'nodes': 'analysis/nodes',
+    'links': 'analysis/links',
+    'road_links': 'analysis/links/road',
+    'pt_links': 'analysis/links/pt',
+}
+
+
+@dataclass(frozen=True)
+class Kammat:
+    # TODO: add the rest of constants from above
+    cpu_threads: int = os.cpu_count() - 2
+
+
+@dataclass(frozen=True)
+class Network:
+    nettype: Literal['ceda', 'generic'] = 'ceda'  # TODO: change to type globally
+    restrict_turns: bool = True  # irrelevant in case of ceda type, will be done anyway
+    internal_maneuvers: bool = True  # TODO: change to simplify_intersections globally
+    lane_definitions_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['network'] + '/lane_definitions.xml')
+    edges_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['network'] + '/edges.shp')
+    nodes_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['network'] + '/nodes.shp')
+    net_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['network'] + '/net.xml')
+
+
+@dataclass(frozen=True)
+class Pt:
+    output_schedule_path: PurePath = PurePath(DEFAULT_DIRECTORIES['network'] + '/schedule.xml')
+    output_vehicles_path: PurePath = PurePath(DEFAULT_DIRECTORIES['network'] + '/vehicles.xml')
+    number_of_threads: int = os.cpu_count() - 2
+    # add predefined earlier
+
+
+@dataclass(frozen=True)
+class Population:
+    variables_path: Optional[PurePath] = None  # will use builtin variables
+    include_teleported: bool = True
+    xml_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/population.xml.gz')
+    csv_path: Optional[PurePath] = None  # will not generate population CSV
+    pickle_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/population.zx')
+    sample: Union[float, int] = 1.0
+    incremental_capacity_allocation_parts: int = 4
+    modal_split_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/modal_split.csv')
+    facilities_counts_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/facilities_counts.shp')
+    relations_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/relations')
+    # add predefined earlier
+
+
+@dataclass(frozen=True)
+class MATSim:
+    number_of_threads: int = os.cpu_count() - 2
+    config_path: PurePath = PurePath('./config.xml')
+    last_iteration: int = 50
+    matsim_output_directory: PurePath = PurePath(DEFAULT_DIRECTORIES['model'])
+    write_events_interval: int = 50
+    disable_innovations_after_fraction: Union[float, int] = 0.9
+    mutation_range: int = 300  # 5 * 60 seconds
+    ram_limit: int = 1024
+    ram_limit_str: str = '1024m'
+    custom_class: str = 'org.matsim.run.RunMatsim'
+    # add predefined earlier
+
+
+@dataclass(frozen=True)
+class Analysis:
+    events_path: PurePath = PurePath(DEFAULT_DIRECTORIES['model'] + '/output_events.xml.gz')
+    net_path: PurePath = PurePath(DEFAULT_DIRECTORIES['model'] + '/output_network.xml.gz')
+    legs_path: PurePath = PurePath(DEFAULT_DIRECTORIES['model'] + '/output_legs.xml.gz')
+    schedule_path: PurePath = PurePath(DEFAULT_DIRECTORIES['model'] + '/output_transitSchedule.xml.gz')
+    output_transfers_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/transfers.csv.gz')
+    output_counts_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/counts.json.gz')
+    output_turns_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/turns.json.gz')
+    output_net_counts_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/counts.shp')
+    output_pt_counts_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/pt.json.gz')
+    output_pt_net_counts_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/pt.shp')
+    output_pt_stops_counts_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/pt_stops.shp')
+    output_ribbon_diagrams_directory: PurePath = PurePath(DEFAULT_DIRECTORIES['nodes'])
+    output_road_links_directory: PurePath = PurePath(DEFAULT_DIRECTORIES['road_links'])
+    output_pt_links_intensities_directory: PurePath = PurePath(DEFAULT_DIRECTORIES['pt_links'])
+    output_pt_lines_intensities_directory: PurePath = PurePath(DEFAULT_DIRECTORIES['pt_links'])
+    output_cordon_stats_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/cordons_stats.shp')
+    output_volume_stats_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/volume_stats.shp')
+    output_road_db_path: PurePath = PurePath(DEFAULT_DIRECTORIES['analysis'] + '/road.db')
+    output_road_db_flush_interval: int = 1000000
+    # add predefined earlier
+
+
+@dataclass(frozen=True)
+class Comparison:
+    network_differences_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['comparison'] + '/network_differences.shp')
+    network_differences_stats_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['comparison'] + '/network_differences.csv')
+    intersection_differences_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['comparison'] + '/intersection_differences.shp')
+    intersection_differences_stats_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['comparison'] + '/intersection_differences.csv')
+    difference_thresh: Union[float, int] = 0.25
+    diff_net_counts_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['comparison'] + '/prev_model_network_differences.shp')
+    diff_pt_net_counts_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['comparison'] + '/prev_model_pt_network_differences.shp')
+    diff_pt_stops_counts_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['comparison'] + '/prev_model_pt_stops_differences.shp')
+    # add predefined earlier
+
+
+@dataclass(frozen=True)
+class GIS:
+    project_path: PurePath = PurePath('./view.qgs')
+    # add predefined earlier
+
+
+@dataclass(frozen=True)
+class Config:
+    """
+    Main frozen configuration dataclass containing submodules.
+
+    Usage:
+        config = Config()
+        print(config.network.lane_definitions_save_path)
+        print(config.population.xml_path)
+        print(config.matsim.cpu_threads)
+    """
+    kammat: Kammat = field(default_factory=Kammat)
+    network: Network = field(default_factory=Network)
+    pt: Pt = field(default_factory=Pt)
+    population: Population = field(default_factory=Population)
+    matsim: MATSim = field(default_factory=MATSim)
+    analysis: Analysis = field(default_factory=Analysis)
+    comparison: Comparison = field(default_factory=Comparison)
+    gis: GIS = field(default_factory=GIS)
+
+C = CONFIG = Config()
 
 class PathPointer:
     """
     Only to get this file's location
     """
     pass
+

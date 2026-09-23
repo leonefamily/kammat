@@ -967,7 +967,7 @@ def get_intersection_geometry(
         t: c / sum(nodeturns.values()) for t, c in nodeturns.items()
     }
     # due to rotated end segments of turn bug, see below
-    iswindows = platform.system().lower() == 'windows'
+    iswindows = True  # platform.system().lower() == 'windows'
 
     for gr, group in groups.items():
         for direction, dirturns in group.items():
