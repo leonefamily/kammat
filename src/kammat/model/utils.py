@@ -54,7 +54,7 @@ def convert_size(
 
 def get_ram_size() -> float:
     """
-    Get RAM on Windows and Linux.
+    Get RAM on all major systems.
 
     Returns
     -------
@@ -62,15 +62,20 @@ def get_ram_size() -> float:
         Installed RAM in gigabytes
 
     """
-    memory = 0
     system = platform.system().lower()
     if system == 'windows':
-        sticks = os.popen('wmic memorychip get capacity').read().split()
-        for module in sticks:
-            if module.isdigit():
-                memory += int(module)
+        memory = int(
+            os.popen(
+                'powershell.exe -NoProfile -NonInteractive -Command '
+                '(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory'
+            ).read()
+        )
     elif system == 'linux':
         memory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+    elif system == "darwin":
+        memory = int(
+            os.popen('sysctl -n hw.memsize').read()
+        )
     else:
         raise NotImplementedError(f'{system} is not supported')
     return memory
