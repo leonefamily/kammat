@@ -304,6 +304,7 @@ STAGES_ARGUMENTS: Dict[str, List[str]] = {
         "target_probabilities_path", "time_courses_path", "city_logistics_path",
         "times_path", "modal_split_path", "indices_path", "relations_path",
         "stops_path", "oneway_flows_path", "ncores", "sample", "pickle_path",
+        "variables_path", "include_teleported", "incremental_capacity_allocation_parts",
         "existing", "launch"
     ],
     "config": [
@@ -400,7 +401,7 @@ class Population:
     incremental_capacity_allocation_parts: int = 4
     modal_split_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/modal_split.csv')
     facilities_counts_save_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/facilities_counts.shp')
-    relations_path: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/relations')
+    relational_matrices_save_directory: PurePath = PurePath(DEFAULT_DIRECTORIES['population'] + '/relations')
     # add predefined earlier
 
 

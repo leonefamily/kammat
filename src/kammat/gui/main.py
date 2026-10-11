@@ -1266,11 +1266,12 @@ def main():
                     no_window=True,
                     default_path=f'{APP_NAME}_settings',
                     keep_on_top=True,
-                    file_types=(("PySimpleGUI settings", "*.sg"),)
+                    file_types=(("PySimpleGUI settings", "*.sg"),
+                                ("kammat settings", "*.json"))
                 )
                 if filename:
                     p = Path(filename)
-                    if p.exists() and p.is_file() and p.suffix == '.sg':
+                    if p.exists() and p.is_file() and p.suffix in ['.sg', '.json']:
                         restore_settings(window, path=filename)
                     else:
                         window['-INFO-'].update(
