@@ -147,7 +147,7 @@ def get_agents_list_multiproc(
     logging.info('Assigning categories, modes and diaries to agents')
 
     if h['diaries'].type == 'strict':
-        agents_df = get_basic_agents_df(facilities, sample=sample)
+        agents_df = get_basic_agents_df(facilities, v=v, sample=sample)
 
         if ncores > 1:
             data = split_agents_setup_data(agents_df, h, ncores)
@@ -168,6 +168,7 @@ def get_agents_list_multiproc(
 def split_agents_data(
         facilities: Dict[str, Union[gpd.GeoDataFrame, pd.DataFrame]],
         agents_list: List[Agent],
+        v: Variables,
         ncores: int = 1,
         **kwargs
         ) -> tuple:
@@ -195,7 +196,7 @@ def split_agents_data(
 
     """
 
-    facilities_splitted = split_facilities(facilities, ncores)
+    facilities_splitted = split_facilities(facilities, v=v, pieces=ncores)
     agents_splitted = list_to_chunks(agents_list, ncores)
 
     outl = []
@@ -206,6 +207,7 @@ def split_agents_data(
             facilities=facilities_splitted[i],
             agents_list=agents_splitted[i],
             process=i,
+            v=v,
             **kwargs
             )
         outl.append(argtuple)
@@ -258,7 +260,7 @@ def handle_regular_agents_multiproc(
 
     if ncores > 1:
         agents_data = split_agents_data(
-            facilities, agents_list, ncores=ncores, h=h, **kwargs
+            facilities, agents_list, v=v, ncores=ncores, h=h, **kwargs
         )
         pool = multiprocessing.Pool(ncores)
         pre_regular_agents_list = pool.starmap(
@@ -272,7 +274,7 @@ def handle_regular_agents_multiproc(
     else:
         facilities_copy = copy.deepcopy(facilities)
         regular_agents_list = handle_and_write_regular_agents(
-            facilities_copy, agents_list, h, **kwargs
+            facilities_copy, agents_list, h, v=v, **kwargs
             )
 
     return regular_agents_list

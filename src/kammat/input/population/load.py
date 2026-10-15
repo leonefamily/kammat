@@ -128,6 +128,7 @@ def handle_population(
     population = prepare_and_handle_agents(
         facilities=facilities,
         h=h,
+        v=v,
         ncores=ncores,
         sample=sample,
         **kwargs

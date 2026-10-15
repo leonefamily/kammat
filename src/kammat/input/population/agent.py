@@ -350,9 +350,9 @@ class Agent:
                 # just append the same coordinates and facility as existing
                 act_dict = visited_dict[next_act]
 
-                dist = proj_distance(coords[-1], act_dict['coord'])
-                stopwalk1 = get_pt_stop_walk(coords[-1], h)
-                stopwalk2 = get_pt_stop_walk(act_dict['coord'], h)
+                dist = proj_distance(xy1=coords[-1], xy2=act_dict['coord'])
+                stopwalk1 = get_pt_stop_walk(coord=coords[-1], h=h)
+                stopwalk2 = get_pt_stop_walk(coord=act_dict['coord'], h=h)
                 gendists.append(0)
                 dists.append(dist)
                 coords.append(act_dict['coord'])
@@ -360,10 +360,12 @@ class Agent:
 
                 if not islast:  # !!! more elegant way needed...
                     mode = self.pick_mode_spatially(
-                        h, i, dist, stopwalk1, stopwalk2,
-                        spat_refs[-1], act_dict['spatial_ref'],
+                        h=h, v=v, tripnum=i, triplen=dist,
+                        stopwalk1=stopwalk1, stopwalk2=stopwalk2,
+                        spat_ref1=spat_refs[-1],
+                        spat_ref2=act_dict['spatial_ref'],
                         reset_at_home=reset_at_home
-                        )
+                    )
                     modes.append(mode)
 
                 pt_stop_walks.append(stopwalk1)
@@ -382,7 +384,7 @@ class Agent:
                 capacity_used.append(False)
             # -----------------------------------------------------------------
 
-            reduce = must_reduce(next_act, v=v)
+            reduce = must_reduce(act=next_act, v=v)
             # whether to reduce capacity of facility
             isup = next_act.isupper()
             # uppercase means escort: same facilities, but different stats in h
@@ -421,7 +423,11 @@ class Agent:
             else:  # all other simulated activities
                 try:
                     gen_dist, next_spat_ref_prob = generate_dist_spatially(
-                        h, v, curr_act, next_act, spat_refs[-1]
+                        h=h,
+                        v=v,
+                        curr_act=curr_act,
+                        next_act=next_act,
+                        curr_spat_ref=spat_refs[-1]
                     )
                 except Exception as e:
                     raise RuntimeError(
@@ -482,17 +488,24 @@ class Agent:
                     filtered = facilities[next_act_l]
 
                 filtered_tar = include_target_probability(
-                    filtered, h, next_spat_ref_prob
+                    filtered=filtered,
+                    h=h,
+                    prec_val=next_spat_ref_prob
                 )
                 # filter by target probability if present
 
                 filtered_idx = include_indices(
-                    filtered_tar, h, next_act_l
+                    filtered=filtered_tar,
+                    h=h,
+                    act_l=next_act_l
                 )
                 # filter by indices probabilities where applicable
 
                 filtered_rel = include_relations(
-                    filtered_idx, h, next_act_l, spat_refs[-1]
+                    filtered=filtered_idx,
+                    h=h,
+                    act_l=next_act_l,
+                    spat_ref=spat_refs[-1]
                     # or visited_dict[v.acts['home']]['spatial_ref']
                 )
                 # if relations are available, reduce possibilities
@@ -500,8 +513,12 @@ class Agent:
                 if next_act_l in v.cluster_affected and len(filtered_rel):
                     # prefer places that lie in predefined clusters
                     filtered_cls = get_places_cluster(
-                        filtered_rel, facilities,
-                        next_act_l, gen_dist, coords[-1], outer_offset=v.cluster_dist_thresh
+                        filtered=filtered_rel,
+                        facilities=facilities,
+                        next_act_l=next_act_l,
+                        gen_dist=gen_dist,
+                        prev=coords[-1],
+                        outer_offset=v.cluster_dist_thresh
                     )
                 else:
                     filtered_cls = filtered_rel
@@ -515,7 +532,9 @@ class Agent:
 
                     # creates new distance based on reachability
                     new_gen_dist = alter_any_dist(
-                        coords[-1], gen_dist, facilities[next_act_l],
+                        last_coord=coords[-1],
+                        gen_dist=gen_dist,
+                        filtered=facilities[next_act_l],
                         outer_offset=v.cluster_dist_thresh,
                         alter_thresh=v.reach_percentage
                     )
@@ -549,8 +568,12 @@ class Agent:
 
                 try:
                     fclt, coord, next_spat_ref = get_min_diff(
-                        facilities, next_act_l, new_gen_dist,
-                        coords[-1], reduce, filtered_cls,  # !!! filtered
+                        facilities=facilities,
+                        act=next_act_l,
+                        gen_dist=new_gen_dist,
+                        xycoords=coords[-1],
+                        reduce=reduce,
+                        facility_df=filtered_cls,  # !!! filtered
                         v=v,
                         extended=True,
                         closer_to_home=closer_to_home,
@@ -583,9 +606,9 @@ class Agent:
 
             # -----------------------------------------------------------------
 
-            dist = proj_distance(coords[-1], coord)
-            stopwalk1 = get_pt_stop_walk(coords[-1], h)
-            stopwalk2 = get_pt_stop_walk(coord, h)
+            dist = proj_distance(xy1=coords[-1], xy2=coord)
+            stopwalk1 = get_pt_stop_walk(coord=coords[-1], h=h)
+            stopwalk2 = get_pt_stop_walk(coord=coord, h=h)
 
             gendists.append(new_gen_dist)
             dists.append(dist)
@@ -597,9 +620,16 @@ class Agent:
 
             if not islast:
                 mode = self.pick_mode_spatially(
-                    h, i, dist, stopwalk1, stopwalk2,
-                    spat_refs[-1], next_spat_ref
-                    )
+                    h=h,
+                    v=v,
+                    tripnum=i,
+                    triplen=dist,
+                    stopwalk1=stopwalk1,
+                    stopwalk2=stopwalk2,
+                    spat_ref1=spat_refs[-1],
+                    spat_ref2=next_spat_ref,
+                    reset_at_home=reset_at_home
+                )
                 modes.append(mode)
 
             if next_act not in visited_dict:
@@ -616,7 +646,7 @@ class Agent:
         self.coords = coords[1:] if remove_first else coords
         self.gendists = intify(gendists[1:] if remove_first else gendists)
         self.trips = intify(dists[1:] if remove_first else dists)
-        self.modes = self._fix_private_modes(modes, v=v)
+        self.modes = self._fix_private_modes(modes=modes, v=v)
         self.pt_stop_walks = intify(pt_stop_walks[1:] if remove_first else pt_stop_walks)
         self.spatial_references = spat_refs[1:] if remove_first else spat_refs
         self.capacity_used = capacity_used[1:] if remove_first else capacity_used
@@ -1474,26 +1504,26 @@ class Agent:
         """
         if 'target_probabilities' in h:
             self.pick_dists_facilities_spatially(
-                facilities, h, v=v,
+                facilities=facilities, h=h, v=v,
                 refiller=refiller
             )
         else:
-            self.generate_dists(h, v=v)
+            self.generate_dists(h=h, v=v)
             pick_facilities(
-                self, facilities, h, v=v
+                self, facilities=facilities, h=h, v=v
                 )  # !!! include into self?
             self.calculate_trips()
-            self.stop_dists(h)
-            self.pick_modes(h, v=v)
+            self.stop_dists(h=h)
+            self.pick_modes(h=h, v=v)
 
         if h['diaries'].type == 'strict':
             self.pick_startend_times_strict(v=v)
         else:
-            self.pick_startend_times(h, v=v)
+            self.pick_startend_times(h=h, v=v)
             self.pick_lastings(h, v=v)
-            self.reduce_lastings(h, v=v, max_lasting=v.lasting_limit)
+            self.reduce_lastings(h=h, v=v, max_lasting=v.lasting_limit)
         if use_links:
-            self.pick_startend_link(h['net'])
+            self.pick_startend_link(v=v, links=h['net'])
         if prefer_private:
             self.prefer_private_mode(once_car_always_car=True,
                                      abandon_pt=abandon_pt)
@@ -3039,7 +3069,7 @@ def handle_and_write_regular_agents(
         try:
             agent.info = f'{process}_{i}'
             agent.process(
-                facilities, h,
+                facilities=facilities, h=h,
                 use_links=use_links, prefer_private=prefer_private,
                 abandon_pt=abandon_pt, include_teleported=include_teleported,
                 refiller=refiller, v=v
